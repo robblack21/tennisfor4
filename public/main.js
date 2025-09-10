@@ -972,6 +972,54 @@ function createSpectators(standDepth) {
   }
 }
   
+function getPlayerPositions() {
+  if (gameManager.gameState.mode === 'singles') {
+    return [
+      { x: 0, z: 3 },
+      { x: 0, z: -3 }
+    ];
+  } else {
+    return [
+      { x: -3, z: 3 },
+      { x: 3, z: -3 },
+      { x: 3, z: 3 },
+      { x: -3, z: -3 }
+    ];
+  }
+}
+
+function addPlayer(playerId) {
+  if (gameManager.gameState.players.indexOf(playerId) === -1) {
+    gameManager.gameState.players.push(playerId);
+    gameManager.readyStates[playerId] = false;
+
+    // Create racket and character for the new player
+    if (appState === 'game') {
+      const playerIndex = gameManager.gameState.players.length - 1;
+      const racket = createWiiRacket();
+      const positions = getPlayerPositions();
+      if (positions[playerIndex]) {
+        racket.position.set(positions[playerIndex].x, 0.5, positions[playerIndex].z);
+      }
+      rackets[playerId] = racket;
+      scene.add(racket);
+
+      const teamIndex = playerIndex % 2;
+      const teamKey = teamIndex === 0 ? 'team1' : 'team2';
+      const character = characterModels[teamKey].clone();
+      character.position.set(
+        racket.position.x,
+        0,
+        racket.position.z + (positions[playerIndex].z > 0 ? -0.5 : 0.5)
+      );
+      if (positions[playerIndex].z > 0) {
+        character.rotation.y = Math.PI;
+      }
+      characters[playerId] = character;
+      scene.add(character);
+    }
+  }
+}
 
 async function setupDaily() {
   try {
@@ -1245,12 +1293,6 @@ async function setupDaily() {
       console.error('Error setting local video:', error);
     }
 
-    // Add local player to the game state
-    if (isHost) {
-      addPlayer(myId);
-      broadcastGameState();
-    }
-
     // Create the local player's video element
     createParticipantVideoElement(myId);
 
@@ -1296,19 +1338,11 @@ async function setupDaily() {
     
     // Add event listeners for game mode buttons
     document.getElementById('singles-btn').addEventListener('click', () => {
-      gameState.mode = 'singles';
-      document.getElementById('singles-btn').classList.add('active');
-      document.getElementById('doubles-btn').classList.remove('active');
-      daily.sendData(JSON.stringify({ type: 'mode', mode: 'singles' }));
-      updateLobby();
+      gameManager.setMode('singles');
     });
     
     document.getElementById('doubles-btn').addEventListener('click', () => {
-      gameState.mode = 'doubles';
-      document.getElementById('doubles-btn').classList.add('active');
-      document.getElementById('singles-btn').classList.remove('active');
-      daily.sendData(JSON.stringify({ type: 'mode', mode: 'doubles' }));
-      updateLobby();
+      gameManager.setMode('doubles');
     });
     
     // For testing: simulate other players joining
@@ -1322,8 +1356,7 @@ async function setupDaily() {
           
           // Simulate them getting ready after a delay
           setTimeout(() => {
-            readyStates[playerId] = true;
-            handleData({ data: JSON.stringify({ type: 'ready', id: playerId, ready: true }) });
+            gameManager.setReady(playerId, true);
           }, 2000 * i);
         }, 1000 * i);
       }
@@ -1368,9 +1401,7 @@ async function setupDaily() {
     
     // Ready button
     document.getElementById('ready-btn').addEventListener('click', () => {
-      readyStates[myId] = true;
-      daily.sendData(JSON.stringify({ type: 'ready', id: myId, ready: true }));
-      updateLobby();
+      gameManager.setReady(myId, true);
     });
     
     // Simulate other players for testing
@@ -1382,8 +1413,7 @@ async function setupDaily() {
         
         // Simulate them getting ready after a delay
         setTimeout(() => {
-          readyStates[playerId] = true;
-          handleData({ data: JSON.stringify({ type: 'ready', id: playerId, ready: true }) });
+          gameManager.setReady(playerId, true);
         }, 2000 * i);
       }, 1000 * i);
     }
@@ -1537,7 +1567,7 @@ function handleParticipantUpdated(event) {
   
   // Update ready state if changed
   if (participant.userData && participant.userData.ready !== undefined) {
-    readyStates[participant.sessionId] = participant.userData.ready;
+    gameManager.readyStates[participant.sessionId] = participant.userData.ready;
     updateLobby();
   }
 }
@@ -2386,10 +2416,10 @@ function addToLobby(id, videoElement) {
 
 function updateLobby() {
   // Count total players
-  const totalPlayers = gameState.players.length;
+  const totalPlayers = gameManager.gameState.players.length;
   
   // Determine required players based on game mode
-  const requiredPlayers = gameState.mode === 'singles' ? 2 : 4;
+  const requiredPlayers = gameManager.gameState.mode === 'singles' ? 2 : 4;
   const allJoined = totalPlayers >= requiredPlayers;
   const allReady = allJoined && gameManager.gameState.players.every(p => gameManager.readyStates[p]);
   
@@ -2411,12 +2441,12 @@ function updateLobby() {
   const team2 = document.getElementById('team2');
   
   // Determine max players per team based on game mode
-  const maxPlayersPerTeam = gameState.mode === 'singles' ? 1 : 2;
+  const maxPlayersPerTeam = gameManager.gameState.mode === 'singles' ? 1 : 2;
   
   if (team1) {
     // Count actual players in team 1 (even indices in players array)
     let team1Count = 0;
-    gameState.players.forEach((id, index) => {
+    gameManager.gameState.players.forEach((id, index) => {
       if (index % 2 === 0) team1Count++;
     });
     team1Count = Math.min(team1Count, maxPlayersPerTeam); // Cap at max players per team
@@ -2428,7 +2458,7 @@ function updateLobby() {
   if (team2) {
     // Count actual players in team 2 (odd indices in players array)
     let team2Count = 0;
-    gameState.players.forEach((id, index) => {
+    gameManager.gameState.players.forEach((id, index) => {
       if (index % 2 === 1) team2Count++;
     });
     team2Count = Math.min(team2Count, maxPlayersPerTeam); // Cap at max players per team
@@ -2453,7 +2483,7 @@ function updateLobby() {
     startGame();
   }
   
-  console.log('Lobby updated. Total players:', totalPlayers, 'Mode:', gameState.mode);
+  console.log('Lobby updated. Total players:', totalPlayers, 'Mode:', gameManager.gameState.mode);
 }
 
 function startGame() {
