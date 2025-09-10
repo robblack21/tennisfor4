@@ -1,0 +1,552 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MediaPipe Character Rigging Test</title>
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+      font-family: Arial, sans-serif;
+      background: linear-gradient(135deg, #22b14c, #00a2e8);
+    }
+    
+    .container {
+      display: flex;
+      height: 100vh;
+    }
+    
+    .game-area {
+      flex: 2;
+      position: relative;
+    }
+    
+    .controls-area {
+      flex: 1;
+      background: rgba(0,0,0,0.8);
+      color: white;
+      padding: 20px;
+      overflow-y: auto;
+    }
+    
+    .controls {
+      margin-bottom: 20px;
+    }
+    
+    button {
+      background: #ff7f27;
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 5px;
+      cursor: pointer;
+      margin: 5px;
+      font-weight: bold;
+      display: block;
+      width: 100%;
+    }
+    
+    button:hover {
+      background: #ff9966;
+    }
+    
+    .video-container {
+      width: 100%;
+      height: 200px;
+      background: #333;
+      border-radius: 10px;
+      margin: 10px 0;
+      position: relative;
+    }
+    
+    video {
+      width: 100%;
+      height: 100%;
+      border-radius: 10px;
+    }
+    
+    .pose-data {
+      background: rgba(0,0,0,0.5);
+      padding: 10px;
+      border-radius: 5px;
+      margin: 10px 0;
+      font-size: 12px;
+    }
+    
+    .status {
+      padding: 5px;
+      margin: 5px 0;
+      border-radius: 3px;
+      font-size: 14px;
+    }
+    
+    .status.good { background: rgba(0,255,0,0.2); }
+    .status.warn { background: rgba(255,255,0,0.2); }
+    .status.error { background: rgba(255,0,0,0.2); }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <!-- 3D Character and Tennis Game -->
+    <div class="game-area" id="game-area">
+    </div>
+    
+    <!-- MediaPipe Controls -->
+    <div class="controls-area">
+      <h3>🤖 MediaPipe Character Control</h3>
+      
+      <div class="controls">
+        <button onclick="startCamera()">Start Camera</button>
+        <button onclick="loadCharacter()">Load Rigged Character</button>
+        <button onclick="togglePoseTracking()">Toggle Pose Tracking</button>
+        <button onclick="resetCharacterPose()">Reset Character Pose</button>
+      </div>
+      
+      <div class="video-container">
+        <video id="webcam" autoplay muted playsinline></video>
+      </div>
+      
+      <div id="status-container">
+        <div class="status" id="camera-status">Camera: Not started</div>
+        <div class="status" id="mediapipe-status">MediaPipe: Loading...</div>
+        <div class="status" id="character-status">Character: Not loaded</div>
+        <div class="status" id="pose-status">Pose: No detection</div>
+      </div>
+      
+      <div class="pose-data">
+        <h4>Pose Data:</h4>
+        <div>Right Wrist: <span id="wrist-pos">-</span></div>
+        <div>Right Elbow: <span id="elbow-pos">-</span></div>
+        <div>Right Shoulder: <span id="shoulder-pos">-</span></div>
+        <div>Swing Angle: <span id="swing-angle">-</span></div>
+        <div>Swing Velocity: <span id="swing-velocity">-</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Load Three.js and GLTF Loader -->
+  <script crossorigin src="https://unpkg.com/three@0.158.0/build/three.min.js"></script>
+  <script crossorigin src="https://unpkg.com/three@0.158.0/examples/js/loaders/GLTFLoader.js"></script>
+  
+  <!-- Load MediaPipe -->
+  <script type="module">
+    try {
+      const vision = await import('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/vision_bundle.js');
+      window.TasksVision = vision;
+      console.log('MediaPipe loaded successfully');
+      updateStatus('mediapipe-status', 'MediaPipe: Loaded ✅', 'good');
+    } catch (error) {
+      console.warn('MediaPipe not available:', error);
+      updateStatus('mediapipe-status', 'MediaPipe: Failed ❌', 'error');
+    }
+  </script>
+  
+  <script>
+    // Global variables
+    let scene, camera, renderer;
+    let character, mixer, animations = {};
+    let poseLandmarker;
+    let webcamRunning = false;
+    let poseTrackingActive = false;
+    let currentPose = null;
+    let lastSwingTime = 0;
+    
+    // Update status function
+    function updateStatus(elementId, text, className) {
+      const element = document.getElementById(elementId);
+      if (element) {
+        element.textContent = text;
+        element.className = 'status ' + (className || '');
+      }
+    }
+    
+    // Initialize the 3D scene
+    function init() {
+      console.log('Initializing 3D scene for character rigging...');
+      
+      // Create scene
+      scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x87CEEB);
+      
+      // Create camera
+      camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+      camera.position.set(0, 1.5, 3);
+      camera.lookAt(0, 1, 0);
+      
+      // Create renderer
+      renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setSize(window.innerWidth * 0.67, window.innerHeight);
+      renderer.shadowMap.enabled = true;
+      renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+      document.getElementById('game-area').appendChild(renderer.domElement);
+      
+      // Add lighting
+      const ambientLight = new THREE.AmbientLight(0x606060, 0.6);
+      scene.add(ambientLight);
+      
+      const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+      directionalLight.position.set(5, 10, 5);
+      directionalLight.castShadow = true;
+      scene.add(directionalLight);
+      
+      // Add ground plane
+      const groundGeometry = new THREE.PlaneGeometry(10, 10);
+      const groundMaterial = new THREE.MeshLambertMaterial({ color: 0x4CAF50 });
+      const ground = new THREE.Mesh(groundGeometry, groundMaterial);
+      ground.rotation.x = -Math.PI / 2;
+      ground.receiveShadow = true;
+      scene.add(ground);
+      
+      // Start render loop
+      animate();
+      
+      console.log('✅ 3D scene initialized');
+    }
+    
+    // Load the rigged character
+    async function loadCharacter() {
+      try {
+        updateStatus('character-status', 'Character: Loading...', 'warn');
+        
+        const loader = new THREE.GLTFLoader();
+        const gltf = await new Promise((resolve, reject) => {
+          loader.load('../assets/rigged_character.glb', resolve, undefined, reject);
+        });
+        
+        character = gltf.scene;
+        character.scale.set(1, 1, 1);
+        character.position.set(0, 0, 0);
+        
+        // Set up animations if available
+        if (gltf.animations && gltf.animations.length > 0) {
+          mixer = new THREE.AnimationMixer(character);
+          gltf.animations.forEach((clip) => {
+            animations[clip.name] = mixer.clipAction(clip);
+            console.log('Found animation:', clip.name);
+          });
+        }
+        
+        // Find bones for rigging
+        character.traverse((child) => {
+          if (child.isBone) {
+            console.log('Found bone:', child.name);
+          }
+        });
+        
+        scene.add(character);
+        updateStatus('character-status', 'Character: Loaded ✅', 'good');
+        console.log('✅ Character loaded successfully');
+        
+      } catch (error) {
+        console.error('Error loading character:', error);
+        updateStatus('character-status', 'Character: Failed to load ❌', 'error');
+        
+        // Create fallback character
+        createFallbackCharacter();
+      }
+    }
+    
+    function createFallbackCharacter() {
+      console.log('Creating fallback character...');
+      const characterGroup = new THREE.Group();
+      
+      // Body
+      const bodyGeometry = new THREE.CylinderGeometry(0.3, 0.3, 1.5);
+      const bodyMaterial = new THREE.MeshLambertMaterial({ color: 0xFF5722 });
+      const body = new THREE.Mesh(bodyGeometry, bodyMaterial);
+      body.position.y = 0.75;
+      characterGroup.add(body);
+      
+      // Head
+      const headGeometry = new THREE.SphereGeometry(0.25);
+      const headMaterial = new THREE.MeshLambertMaterial({ color: 0xFFE0BD });
+      const head = new THREE.Mesh(headGeometry, headMaterial);
+      head.position.y = 1.8;
+      characterGroup.add(head);
+      
+      // Arms (these will be controlled by MediaPipe)
+      const armGeometry = new THREE.CylinderGeometry(0.08, 0.08, 0.6);
+      const armMaterial = new THREE.MeshLambertMaterial({ color: 0xFF5722 });
+      
+      const leftArm = new THREE.Mesh(armGeometry, armMaterial);
+      leftArm.position.set(-0.5, 1.2, 0);
+      leftArm.rotation.z = Math.PI / 4;
+      leftArm.name = 'leftArm';
+      characterGroup.add(leftArm);
+      
+      const rightArm = new THREE.Mesh(armGeometry, armMaterial);
+      rightArm.position.set(0.5, 1.2, 0);
+      rightArm.rotation.z = -Math.PI / 4;
+      rightArm.name = 'rightArm';
+      characterGroup.add(rightArm);
+      
+      // Store references for pose control
+      characterGroup.userData = {
+        bones: {
+          leftArm: leftArm,
+          rightArm: rightArm,
+          head: head
+        }
+      };
+      
+      character = characterGroup;
+      scene.add(character);
+      updateStatus('character-status', 'Character: Fallback loaded ✅', 'good');
+    }
+    
+    // Set up MediaPipe pose tracking
+    async function setupMediaPipe() {
+      try {
+        if (!window.TasksVision) {
+          throw new Error('TasksVision not available');
+        }
+        
+        const { FilesetResolver, PoseLandmarker } = window.TasksVision;
+        
+        const vision = await FilesetResolver.forVisionTasks(
+          "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/wasm"
+        );
+        
+        poseLandmarker = await PoseLandmarker.createFromOptions(vision, {
+          baseOptions: {
+            modelAssetPath: "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task",
+            delegate: "GPU"
+          },
+          runningMode: "VIDEO",
+          numPoses: 1
+        });
+        
+        updateStatus('mediapipe-status', 'MediaPipe: Ready ✅', 'good');
+        console.log('✅ MediaPipe pose landmarker ready');
+        
+      } catch (error) {
+        console.error('Error setting up MediaPipe:', error);
+        updateStatus('mediapipe-status', 'MediaPipe: Error ❌', 'error');
+      }
+    }
+    
+    // Start camera
+    async function startCamera() {
+      try {
+        const video = document.getElementById('webcam');
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { width: 640, height: 480 }
+        });
+        
+        video.srcObject = stream;
+        video.onloadedmetadata = () => {
+          webcamRunning = true;
+          updateStatus('camera-status', 'Camera: Running ✅', 'good');
+          console.log('✅ Camera started');
+        };
+        
+      } catch (error) {
+        console.error('Error starting camera:', error);
+        updateStatus('camera-status', 'Camera: Error ❌', 'error');
+      }
+    }
+    
+    // Toggle pose tracking
+    function togglePoseTracking() {
+      poseTrackingActive = !poseTrackingActive;
+      
+      if (poseTrackingActive && webcamRunning && poseLandmarker) {
+        startPoseDetection();
+        updateStatus('pose-status', 'Pose: Tracking ✅', 'good');
+      } else {
+        updateStatus('pose-status', 'Pose: Stopped ⏸️', 'warn');
+      }
+      
+      console.log('Pose tracking:', poseTrackingActive);
+    }
+    
+    // Start pose detection loop
+    function startPoseDetection() {
+      const video = document.getElementById('webcam');
+      
+      const detectPose = async () => {
+        if (!poseTrackingActive || !webcamRunning || !poseLandmarker) return;
+        
+        try {
+          if (video.readyState >= 2) {
+            const result = await poseLandmarker.detectForVideo(video, performance.now());
+            
+            if (result.landmarks && result.landmarks.length > 0) {
+              currentPose = result.landmarks[0];
+              updatePoseData(currentPose);
+              
+              // Apply pose to character
+              if (character) {
+                applyPoseToCharacter(currentPose);
+              }
+            }
+          }
+        } catch (error) {
+          console.error('Error detecting pose:', error);
+        }
+        
+        if (poseTrackingActive) {
+          requestAnimationFrame(detectPose);
+        }
+      };
+      
+      detectPose();
+    }
+    
+    // Update pose data display
+    function updatePoseData(pose) {
+      if (!pose) return;
+      
+      const wrist = pose[16]; // Right wrist
+      const elbow = pose[14]; // Right elbow  
+      const shoulder = pose[12]; // Right shoulder
+      
+      if (wrist && elbow && shoulder) {
+        document.getElementById('wrist-pos').textContent = 
+          `${wrist.x.toFixed(2)}, ${wrist.y.toFixed(2)}, ${wrist.z.toFixed(2)}`;
+        document.getElementById('elbow-pos').textContent = 
+          `${elbow.x.toFixed(2)}, ${elbow.y.toFixed(2)}, ${elbow.z.toFixed(2)}`;
+        document.getElementById('shoulder-pos').textContent = 
+          `${shoulder.x.toFixed(2)}, ${shoulder.y.toFixed(2)}, ${shoulder.z.toFixed(2)}`;
+        
+        // Calculate swing angle and velocity
+        const dx = wrist.x - shoulder.x;
+        const dy = wrist.y - shoulder.y;
+        const angle = Math.atan2(dy, dx) * (180 / Math.PI);
+        const velocity = Math.sqrt(dx * dx + dy * dy);
+        
+        document.getElementById('swing-angle').textContent = angle.toFixed(1) + '°';
+        document.getElementById('swing-velocity').textContent = velocity.toFixed(3);
+        
+        // Detect swing gesture
+        if (velocity > 0.3 && Date.now() - lastSwingTime > 500) {
+          console.log('🎾 Swing detected!', { angle, velocity });
+          lastSwingTime = Date.now();
+          
+          // Trigger swing animation
+          triggerSwingAnimation();
+        }
+      }
+    }
+    
+    // Apply MediaPipe pose to character rigging
+    function applyPoseToCharacter(pose) {
+      if (!character) return;
+      
+      const wrist = pose[16]; // Right wrist
+      const elbow = pose[14]; // Right elbow
+      const shoulder = pose[12]; // Right shoulder
+      
+      if (!wrist || !elbow || !shoulder) return;
+      
+      // Find character bones
+      let rightArmBone = null;
+      let leftArmBone = null;
+      
+      if (character.userData && character.userData.bones) {
+        rightArmBone = character.userData.bones.rightArm;
+        leftArmBone = character.userData.bones.leftArm;
+      } else {
+        // Search for bones in GLTF model
+        character.traverse((child) => {
+          if (child.isBone || child.type === 'Bone') {
+            if (child.name.toLowerCase().includes('right') && child.name.toLowerCase().includes('arm')) {
+              rightArmBone = child;
+            }
+            if (child.name.toLowerCase().includes('left') && child.name.toLowerCase().includes('arm')) {
+              leftArmBone = child;
+            }
+          }
+        });
+      }
+      
+      // Apply pose to right arm
+      if (rightArmBone) {
+        // Calculate arm angle from shoulder to wrist
+        const armAngleX = (wrist.y - shoulder.y) * 2; // Scale for visibility
+        const armAngleZ = (wrist.x - shoulder.x) * 2;
+        
+        rightArmBone.rotation.x = armAngleX;
+        rightArmBone.rotation.z = armAngleZ;
+      }
+      
+      // Apply pose to left arm (opposite for balance)
+      if (leftArmBone) {
+        const leftWrist = pose[15]; // Left wrist
+        if (leftWrist) {
+          const leftArmAngleX = (leftWrist.y - shoulder.y) * 2;
+          const leftArmAngleZ = (leftWrist.x - shoulder.x) * 2;
+          
+          leftArmBone.rotation.x = leftArmAngleX;
+          leftArmBone.rotation.z = leftArmAngleZ;
+        }
+      }
+    }
+    
+    // Trigger swing animation
+    function triggerSwingAnimation() {
+      if (!character) return;
+      
+      // If we have GLTF animations, play swing animation
+      if (mixer && animations.swing) {
+        animations.swing.reset();
+        animations.swing.play();
+      } else {
+        // Manual swing animation for fallback character
+        const rightArm = character.userData?.bones?.rightArm;
+        if (rightArm) {
+          // Quick swing motion
+          const originalRotation = rightArm.rotation.clone();
+          rightArm.rotation.z = -Math.PI / 2; // Full swing
+          
+          setTimeout(() => {
+            rightArm.rotation.copy(originalRotation);
+          }, 200);
+        }
+      }
+    }
+    
+    // Reset character to default pose
+    function resetCharacterPose() {
+      if (!character) return;
+      
+      character.traverse((child) => {
+        if (child.isBone || child.type === 'Bone') {
+          child.rotation.set(0, 0, 0);
+        }
+      });
+      
+      console.log('Character pose reset');
+    }
+    
+    // Animation loop
+    function animate() {
+      requestAnimationFrame(animate);
+      
+      // Update animation mixer
+      if (mixer) {
+        mixer.update(0.016); // 60fps
+      }
+      
+      // Render
+      renderer.render(scene, camera);
+    }
+    
+    // Handle window resize
+    window.addEventListener('resize', () => {
+      camera.aspect = (window.innerWidth * 0.67) / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth * 0.67, window.innerHeight);
+    });
+    
+    // Initialize everything
+    init();
+    
+    // Auto-setup MediaPipe when script loads
+    setTimeout(async () => {
+      await setupMediaPipe();
+    }, 1000);
+  </script>
+</body>
+</html>
