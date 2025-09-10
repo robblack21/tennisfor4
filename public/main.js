@@ -292,11 +292,46 @@ function createDefaultCharacterModel(teamIndex) {
         rightLeg: rightLeg
       },
       restPose: {
-        head: { position: new THREE.Vector3(head.position.x, head.position.y, head.position.z), rotation: { x: head.rotation.x, y: head.rotation.y, z: head.rotation.z } },
-        leftArm: { position: new THREE.Vector3(leftArm.position.x, leftArm.position.y, leftArm.position.z), rotation: { x: leftArm.rotation.x, y: leftArm.rotation.y, z: leftArm.rotation.z } },
-        rightArm: { position: new THREE.Vector3(rightArm.position.x, rightArm.position.y, rightArm.position.z), rotation: { x: rightArm.rotation.x, y: rightArm.rotation.y, z: rightArm.rotation.z } },
-        leftLeg: { position: new THREE.Vector3(leftLeg.position.x, leftLeg.position.y, leftLeg.position.z), rotation: { x: leftLeg.rotation.x, y: leftLeg.rotation.y, z: leftLeg.rotation.z } },
-        rightLeg: { position: new THREE.Vector3(rightLeg.position.x, rightLeg.position.y, rightLeg.position.z), rotation: { x: rightLeg.rotation.x, y: rightLeg.rotation.y, z: rightLeg.rotation.z } }
+        head: {
+          position: new THREE.Vector3(head.position.x, head.position.y, head.position.z),
+          rotation: {
+            x: head.rotation ? head.rotation.x || 0 : 0,
+            y: head.rotation ? head.rotation.y || 0 : 0,
+            z: head.rotation ? head.rotation.z || 0 : 0
+          }
+        },
+        leftArm: {
+          position: new THREE.Vector3(leftArm.position.x, leftArm.position.y, leftArm.position.z),
+          rotation: {
+            x: leftArm.rotation ? leftArm.rotation.x || 0 : 0,
+            y: leftArm.rotation ? leftArm.rotation.y || 0 : 0,
+            z: leftArm.rotation ? leftArm.rotation.z || 0 : 0
+          }
+        },
+        rightArm: {
+          position: new THREE.Vector3(rightArm.position.x, rightArm.position.y, rightArm.position.z),
+          rotation: {
+            x: rightArm.rotation ? rightArm.rotation.x || 0 : 0,
+            y: rightArm.rotation ? rightArm.rotation.y || 0 : 0,
+            z: rightArm.rotation ? rightArm.rotation.z || 0 : 0
+          }
+        },
+        leftLeg: {
+          position: new THREE.Vector3(leftLeg.position.x, leftLeg.position.y, leftLeg.position.z),
+          rotation: {
+            x: leftLeg.rotation ? leftLeg.rotation.x || 0 : 0,
+            y: leftLeg.rotation ? leftLeg.rotation.y || 0 : 0,
+            z: leftLeg.rotation ? leftLeg.rotation.z || 0 : 0
+          }
+        },
+        rightLeg: {
+          position: new THREE.Vector3(rightLeg.position.x, rightLeg.position.y, rightLeg.position.z),
+          rotation: {
+            x: rightLeg.rotation ? rightLeg.rotation.x || 0 : 0,
+            y: rightLeg.rotation ? rightLeg.rotation.y || 0 : 0,
+            z: rightLeg.rotation ? rightLeg.rotation.z || 0 : 0
+          }
+        }
       },
       animations: {
         swinging: false,
@@ -311,8 +346,44 @@ function createDefaultCharacterModel(teamIndex) {
 
 async function setupMediaPipe() {
   try {
-    const FilesetResolver = window.TasksVision ? window.TasksVision.FilesetResolver : window.FilesetResolver;
-    const PoseLandmarker = window.TasksVision ? window.TasksVision.PoseLandmarker : window.PoseLandmarker;
+    // Check if MediaPipe is already loaded
+    let FilesetResolver, PoseLandmarker;
+    
+    if (window.TasksVision) {
+      console.log('Using TasksVision global object');
+      FilesetResolver = window.TasksVision.FilesetResolver;
+      PoseLandmarker = window.TasksVision.PoseLandmarker;
+    } else if (window.FilesetResolver && window.PoseLandmarker) {
+      console.log('Using direct global MediaPipe objects');
+      FilesetResolver = window.FilesetResolver;
+      PoseLandmarker = window.PoseLandmarker;
+    } else {
+      console.log('MediaPipe not found in global scope, attempting to load dynamically');
+      
+      try {
+        // Try to load MediaPipe dynamically as ES module
+        const mediapipeScript = document.createElement('script');
+        mediapipeScript.type = 'module';
+        mediapipeScript.textContent = `
+          import * as vision from 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/vision_bundle.mjs';
+          window.TasksVision = vision;
+          console.log('MediaPipe loaded as ES module:', window.TasksVision);
+        `;
+        document.head.appendChild(mediapipeScript);
+        
+        // Wait for script to load
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        
+        // Check if it loaded
+        if (window.TasksVision) {
+          FilesetResolver = window.TasksVision.FilesetResolver;
+          PoseLandmarker = window.TasksVision.PoseLandmarker;
+          console.log('MediaPipe loaded successfully via ES module');
+        }
+      } catch (loadError) {
+        console.error('Error loading MediaPipe dynamically:', loadError);
+      }
+    }
 
     if (!FilesetResolver || !PoseLandmarker) {
       console.warn('MediaPipe not loaded, using mock pose tracking');
@@ -337,18 +408,23 @@ async function setupMediaPipe() {
     }
 
     console.log('Setting up MediaPipe with real implementation');
-    const vision = await FilesetResolver.forVisionTasks(
-      "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/wasm"
-    );
-    poseLandmarker = await PoseLandmarker.createFromOptions(vision, {
-      baseOptions: {
-        modelAssetPath: `https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task`,
-        delegate: "GPU"
-      },
-      runningMode: "VIDEO",
-      numPoses: 1
-    });
-    console.log('MediaPipe setup complete');
+    try {
+      const vision = await FilesetResolver.forVisionTasks(
+        "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/wasm"
+      );
+      poseLandmarker = await PoseLandmarker.createFromOptions(vision, {
+        baseOptions: {
+          modelAssetPath: `https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task`,
+          delegate: "GPU"
+        },
+        runningMode: "VIDEO",
+        numPoses: 1
+      });
+      console.log('MediaPipe setup complete');
+    } catch (initError) {
+      console.error('Error initializing MediaPipe:', initError);
+      throw initError;
+    }
   } catch (error) {
     console.error('Error setting up MediaPipe:', error);
     // Create fallback mock implementation
@@ -526,39 +602,62 @@ function createBallTrail() {
 }
 
 function updateBallTrail() {
-  // Store current position
-  ball.previousPositions.unshift({
-    position: new THREE.Vector3(ball.position.x, ball.position.y, ball.position.z),
-    velocity: new THREE.Vector3(ball.velocity.x, ball.velocity.y, ball.velocity.z).length()
-  });
-  
-  // Limit the number of positions stored
-  if (ball.previousPositions.length > 30) {
-    ball.previousPositions.pop();
-  }
-  
-  // Update trail geometry
-  const positions = ballTrail.geometry.attributes.position.array;
-  const velocityMax = Math.max(...ball.previousPositions.map(p => p.velocity), 0.1);
-  
-  for (let i = 0; i < ball.previousPositions.length; i++) {
-    const pos = ball.previousPositions[i].position;
-    const velocityFactor = ball.previousPositions[i].velocity / velocityMax;
+  try {
+    // Store current position - create a new Vector3 with explicit coordinates
+    const currentPosition = new THREE.Vector3(
+      ball.position.x || 0,
+      ball.position.y || 0,
+      ball.position.z || 0
+    );
     
-    // Position
-    positions[i * 3] = pos.x;
-    positions[i * 3 + 1] = pos.y;
-    positions[i * 3 + 2] = pos.z;
+    // Calculate velocity length safely
+    let velocityLength = 0;
+    if (ball.velocity) {
+      const vx = ball.velocity.x || 0;
+      const vy = ball.velocity.y || 0;
+      const vz = ball.velocity.z || 0;
+      velocityLength = Math.sqrt(vx*vx + vy*vy + vz*vz);
+    }
     
-    // Update size based on velocity
-    ballTrail.geometry.attributes.position.needsUpdate = true;
+    // Add to trail
+    ball.previousPositions.unshift({
+      position: currentPosition,
+      velocity: velocityLength
+    });
     
-    // Update opacity based on index (fade out)
-    const opacity = (1 - i / ball.previousPositions.length) * velocityFactor;
-    ballTrail.material.opacity = Math.min(0.7, opacity);
+    // Limit the number of positions stored
+    if (ball.previousPositions.length > 30) {
+      ball.previousPositions.pop();
+    }
     
-    // Update size based on velocity
-    ballTrail.material.size = 0.05 + velocityFactor * 0.05;
+    // Update trail geometry
+    const positions = ballTrail.geometry.attributes.position.array;
+    
+    // Find maximum velocity (with fallback)
+    const velocities = ball.previousPositions.map(p => p.velocity || 0);
+    const velocityMax = Math.max(...velocities, 0.1);
+    
+    for (let i = 0; i < ball.previousPositions.length; i++) {
+      const pos = ball.previousPositions[i].position;
+      const velocityFactor = (ball.previousPositions[i].velocity || 0) / velocityMax;
+      
+      // Position - with null checks
+      positions[i * 3] = pos ? (pos.x || 0) : 0;
+      positions[i * 3 + 1] = pos ? (pos.y || 0) : 0;
+      positions[i * 3 + 2] = pos ? (pos.z || 0) : 0;
+      
+      // Mark geometry for update
+      ballTrail.geometry.attributes.position.needsUpdate = true;
+      
+      // Update opacity based on index (fade out)
+      const opacity = (1 - i / ball.previousPositions.length) * velocityFactor;
+      ballTrail.material.opacity = Math.min(0.7, opacity);
+      
+      // Update size based on velocity
+      ballTrail.material.size = 0.05 + velocityFactor * 0.05;
+    }
+  } catch (error) {
+    console.error('Error updating ball trail:', error);
   }
 }
 
@@ -842,23 +941,64 @@ async function setupDaily() {
       };
     } else {
       console.log('Creating real Daily call object');
-      daily = Daily.createCallObject({
-        audioSource: true,
-        videoSource: true
-      });
       
-      // Show camera permission dialog
+      // First request camera permissions explicitly
       try {
         console.log('Requesting camera permissions...');
-        await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-        console.log('Camera permissions granted');
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { width: 640, height: 480 },
+          audio: true
+        });
+        console.log('Camera permissions granted, stream:', stream);
+        
+        // Create a video element to display the stream immediately
+        const previewVideo = document.createElement('video');
+        previewVideo.srcObject = stream;
+        previewVideo.autoplay = true;
+        previewVideo.muted = true;
+        previewVideo.style.position = 'fixed';
+        previewVideo.style.top = '10px';
+        previewVideo.style.right = '10px';
+        previewVideo.style.width = '160px';
+        previewVideo.style.height = '120px';
+        previewVideo.style.borderRadius = '10px';
+        previewVideo.style.zIndex = '1000';
+        previewVideo.style.border = '2px solid white';
+        document.body.appendChild(previewVideo);
+        
+        // Create Daily call object with the stream
+        daily = Daily.createCallObject({
+          audioSource: stream.getAudioTracks()[0],
+          videoSource: stream.getVideoTracks()[0]
+        });
       } catch (err) {
         console.warn('Camera permission error:', err);
+        // Create Daily call object without camera/mic
+        daily = Daily.createCallObject();
       }
       
+      // Join the Daily room
       console.log('Joining Daily room:', ROOM_URL);
-      await daily.join({ url: ROOM_URL });
-      console.log('Joined Daily room successfully');
+      try {
+        await daily.join({
+          url: ROOM_URL,
+          userName: 'Player-' + Math.floor(Math.random() * 1000)
+        });
+        console.log('Joined Daily room successfully');
+        
+        // Check if we have participants and log them
+        const participants = daily.participants();
+        console.log('Current participants:', participants);
+        
+        // Broadcast a hello message to notify others
+        daily.sendData(JSON.stringify({
+          type: 'hello',
+          id: daily.participants().local.sessionId,
+          timestamp: Date.now()
+        }));
+      } catch (err) {
+        console.error('Error joining Daily room:', err);
+      }
     }
     
     myId = daily.participants().local.sessionId;
@@ -993,25 +1133,37 @@ function handleParticipantJoined(event) {
   const participant = event.participant;
   console.log('Participant joined:', participant.sessionId);
   
-  gameState.players.push(participant.sessionId);
-  readyStates[participant.sessionId] = false;
-  
-  // Create video element for the participant
-  const videoElement = document.createElement('video');
-  videoElement.id = `lobby-video-${participant.sessionId}`;
-  videoElement.autoplay = true;
-  videoElement.muted = true;
-  videoElement.className = 'lobby-video';
-  
-  try {
-    console.log('Setting participant video:', participant.sessionId);
-    daily.setParticipantVideo(participant.sessionId, videoElement);
-    addToLobby(participant.sessionId, videoElement);
-  } catch (error) {
-    console.error('Error setting participant video:', error);
+  // Check if this participant is already in our players list
+  if (gameState.players.indexOf(participant.sessionId) === -1) {
+    gameState.players.push(participant.sessionId);
+    readyStates[participant.sessionId] = false;
+    
+    // Create video element for the participant
+    const videoElement = document.createElement('video');
+    videoElement.id = `lobby-video-${participant.sessionId}`;
+    videoElement.autoplay = true;
+    videoElement.muted = true;
+    videoElement.className = 'lobby-video';
+    
+    try {
+      console.log('Setting participant video:', participant.sessionId);
+      daily.setParticipantVideo(participant.sessionId, videoElement);
+      addToLobby(participant.sessionId, videoElement);
+    } catch (error) {
+      console.error('Error setting participant video:', error);
+    }
+    
+    // Send a hello message to notify the new participant of our presence
+    daily.sendData(JSON.stringify({
+      type: 'hello',
+      id: myId,
+      timestamp: Date.now()
+    }));
+    
+    updateLobby();
+  } else {
+    console.log('Participant already in players list:', participant.sessionId);
   }
-  
-  updateLobby();
 
   if (appState === 'game') {
     // Create Wii-style racket for new player
@@ -1175,43 +1327,54 @@ function handleParticipantUpdated(event) {
 }
 
 function handleParticipantLeft(event) {
-  const index = gameState.players.indexOf(event.participant.sessionId);
+  const participantId = event.participant.sessionId;
+  console.log('Participant left:', participantId);
+  
+  const index = gameState.players.indexOf(participantId);
   if (index > -1) {
     gameState.players.splice(index, 1);
   }
   
   // Remove racket
   try {
-    scene.remove(rackets[event.participant.sessionId]);
+    scene.remove(rackets[participantId]);
   } catch (error) {
     // Fallback for when remove method fails
-    const index = scene.children.indexOf(rackets[event.participant.sessionId]);
+    const index = scene.children.indexOf(rackets[participantId]);
     if (index > -1) {
       scene.children.splice(index, 1);
     }
     console.log("Using fallback scene.remove for racket");
   }
-  delete rackets[event.participant.sessionId];
+  delete rackets[participantId];
   
   // Remove character
   try {
-    scene.remove(characters[event.participant.sessionId]);
+    scene.remove(characters[participantId]);
   } catch (error) {
     // Fallback for when remove method fails
-    const index = scene.children.indexOf(characters[event.participant.sessionId]);
+    const index = scene.children.indexOf(characters[participantId]);
     if (index > -1) {
       scene.children.splice(index, 1);
     }
     console.log("Using fallback scene.remove for character");
   }
-  delete characters[event.participant.sessionId];
+  delete characters[participantId];
 
   // Remove video container
-  const container = document.getElementById(`video-${event.participant.sessionId}`)?.parentElement;
+  const container = document.getElementById(`video-container-${participantId}`);
   if (container) {
+    console.log('Removing video container for participant:', participantId);
     container.remove();
+  } else {
+    console.log('Video container not found for participant:', participantId);
   }
+  
+  // Remove ready state
+  delete readyStates[participantId];
 
+  // Update UI
+  updateLobby();
   updateUI();
 }
 
@@ -1222,6 +1385,13 @@ function handleData(event) {
     updateLobby();
   } else if (data.type === 'start') {
     startGame();
+  } else if (data.type === 'hello') {
+    console.log(`Received hello from player ${data.id} at ${new Date(data.timestamp).toLocaleTimeString()}`);
+    // Add this player to our list if not already there
+    if (gameState.players.indexOf(data.id) === -1) {
+      gameState.players.push(data.id);
+      updateLobby();
+    }
   } else {
     if (!inputBuffer[data.t]) inputBuffer[data.t] = {};
     inputBuffer[data.t][data.id] = data.swing;
@@ -1617,7 +1787,7 @@ function updateUI() {
   const setsDisplay = `${gameState.sets[0]}-${gameState.sets[1]}`;
   
   document.getElementById('score').textContent = `${pointsDisplay} | Games: ${gamesDisplay} | Sets: ${setsDisplay}`;
-  document.getElementById('players').textContent = gameState.players.length + 1;
+  document.getElementById('players').textContent = `${gameState.players.length}/4`;
   
   // Update server indicator
   updateServerIndicator();
@@ -1915,6 +2085,17 @@ function addToLobby(id, videoElement) {
   // Check if this player is already in the lobby
   if (document.getElementById(`video-container-${id}`)) {
     console.log('Player already in lobby:', id);
+    
+    // If we have a video element but the container has a placeholder, replace it
+    if (videoElement) {
+      const container = document.getElementById(`video-container-${id}`);
+      const placeholder = container.querySelector('.video-placeholder');
+      if (placeholder) {
+        console.log('Replacing placeholder with video for player:', id);
+        container.replaceChild(videoElement, placeholder);
+      }
+    }
+    
     return;
   }
 
@@ -1923,9 +2104,11 @@ function addToLobby(id, videoElement) {
   container.className = 'video-container';
   container.id = `video-container-${id}`;
   
-  // Add player slot number
-  const slotNumber = gameState.players.indexOf(id) + 1;
+  // Determine player index and team
+  const playerIndex = gameState.players.indexOf(id);
   const isLocal = id === myId;
+  const teamNumber = (playerIndex === -1 || playerIndex % 2 === 0) ? 1 : 2;
+  const teamColor = teamNumber === 1 ? '#FF5722' : '#2196F3';
   
   // Add video element
   if (videoElement) {
@@ -1936,13 +2119,15 @@ function addToLobby(id, videoElement) {
     const placeholder = document.createElement('div');
     placeholder.className = 'video-placeholder';
     placeholder.textContent = 'Camera loading...';
+    placeholder.style.borderColor = teamColor;
     container.appendChild(placeholder);
   }
 
-  // Add player name
+  // Add player name with team indicator
   const nameElement = document.createElement('div');
   nameElement.className = 'player-name';
   nameElement.textContent = `${isLocal ? 'You' : 'Player'} (${id.slice(-4)})`;
+  nameElement.style.backgroundColor = `${teamColor}88`; // Add transparency
   container.appendChild(nameElement);
 
   // Add ready indicator
@@ -1952,26 +2137,35 @@ function addToLobby(id, videoElement) {
   readyIndicator.textContent = 'Not Ready';
   container.appendChild(readyIndicator);
 
-  // Assign to teams alternately
-  const playerIndex = gameState.players.indexOf(id);
-  if (playerIndex === -1) {
-    // Local player
-    team1.appendChild(container);
-  } else if (playerIndex % 2 === 0) {
+  // Assign to teams based on player index
+  if (teamNumber === 1) {
+    // Team 1 (local player or even indices)
     team1.appendChild(container);
   } else {
+    // Team 2 (odd indices)
     team2.appendChild(container);
   }
   
-  console.log('Player added to lobby:', id);
+  console.log('Player added to lobby:', id, 'to team:', teamNumber);
+  
+  // Update the lobby UI to reflect the new player
+  updateLobby();
 }
 
 function updateLobby() {
+  // Count total players (including local player)
   const totalPlayers = gameState.players.length + 1; // +1 for local
   const allJoined = totalPlayers >= 4;
   const allReady = allJoined && Object.values(readyStates).every(ready => ready);
   
-  // Update player count display
+  // Update global player counter
+  const playerCountElement = document.getElementById('player-count');
+  if (playerCountElement) {
+    playerCountElement.textContent = `${totalPlayers}/4`;
+    playerCountElement.style.color = totalPlayers >= 4 ? '#00ff00' : '#ffffff';
+  }
+  
+  // Update ready button and status
   document.getElementById('ready-btn').disabled = !allJoined;
   document.getElementById('ready-status').textContent = allJoined ?
     (allReady ? 'All ready! Starting game...' : 'All players joined! Click ready.') :
@@ -1982,11 +2176,27 @@ function updateLobby() {
   const team2 = document.getElementById('team2');
   
   if (team1) {
-    team1.querySelector('h2').textContent = `Team 1 (${Math.ceil(totalPlayers/2) >= 2 ? '2' : Math.ceil(totalPlayers/2)}/2)`;
+    // Count actual players in team 1 (even indices in players array + local player)
+    let team1Count = 1; // Start with 1 for local player
+    gameState.players.forEach((id, index) => {
+      if (index % 2 === 0 && id !== myId) team1Count++;
+    });
+    team1Count = Math.min(team1Count, 2); // Cap at 2 players
+    
+    team1.querySelector('h2').textContent = `Team 1 (${team1Count}/2)`;
+    team1.querySelector('h2').style.backgroundColor = team1Count >= 2 ? 'rgba(255,87,34,1)' : 'rgba(255,87,34,0.7)';
   }
   
   if (team2) {
-    team2.querySelector('h2').textContent = `Team 2 (${Math.floor(totalPlayers/2) >= 2 ? '2' : Math.floor(totalPlayers/2)}/2)`;
+    // Count actual players in team 2 (odd indices in players array)
+    let team2Count = 0;
+    gameState.players.forEach((id, index) => {
+      if (index % 2 === 1) team2Count++;
+    });
+    team2Count = Math.min(team2Count, 2); // Cap at 2 players
+    
+    team2.querySelector('h2').textContent = `Team 2 (${team2Count}/2)`;
+    team2.querySelector('h2').style.backgroundColor = team2Count >= 2 ? 'rgba(33,150,243,1)' : 'rgba(33,150,243,0.7)';
   }
   
   // Update ready indicators
@@ -2081,27 +2291,58 @@ function updateCharacterAnimations() {
       if (progress < 1) {
         // Swing forward animation
         const swingPower = rig.animations.swingVelocity / 10;
-        rightArm.rotation.x = -Math.PI / 4 + progress * Math.PI / 2 * swingPower;
-        rightArm.rotation.z = Math.PI / 3 - progress * Math.PI / 2;
+        
+        // Safely set rotation properties
+        if (rightArm.rotation) {
+          rightArm.rotation.x = -Math.PI / 4 + progress * Math.PI / 2 * swingPower;
+          rightArm.rotation.z = Math.PI / 3 - progress * Math.PI / 2;
+        } else {
+          // Create rotation object if it doesn't exist
+          rightArm.rotation = {
+            x: -Math.PI / 4 + progress * Math.PI / 2 * swingPower,
+            y: 0,
+            z: Math.PI / 3 - progress * Math.PI / 2
+          };
+        }
         
         // Also animate the head to look at the ball
         if (rig.bones.head) {
-          rig.bones.head.rotation.x = Math.sin(progress * Math.PI) * 0.2;
+          if (rig.bones.head.rotation) {
+            rig.bones.head.rotation.x = Math.sin(progress * Math.PI) * 0.2;
+          } else {
+            rig.bones.head.rotation = { x: Math.sin(progress * Math.PI) * 0.2, y: 0, z: 0 };
+          }
         }
       } else {
         // Reset to rest pose
         if (rig.restPose.rightArm) {
-          rightArm.rotation.x = rig.restPose.rightArm.rotation.x || 0;
-          rightArm.rotation.y = rig.restPose.rightArm.rotation.y || 0;
-          rightArm.rotation.z = rig.restPose.rightArm.rotation.z || 0;
+          // Safely set rotation properties
+          if (!rightArm.rotation) rightArm.rotation = {};
+          
+          rightArm.rotation.x = rig.restPose.rightArm.rotation ?
+            (rig.restPose.rightArm.rotation.x || 0) : 0;
+          rightArm.rotation.y = rig.restPose.rightArm.rotation ?
+            (rig.restPose.rightArm.rotation.y || 0) : 0;
+          rightArm.rotation.z = rig.restPose.rightArm.rotation ?
+            (rig.restPose.rightArm.rotation.z || 0) : 0;
         } else {
-          rightArm.rotation.set(0, 0, 0);
+          // Default rotation if no rest pose
+          if (!rightArm.rotation) rightArm.rotation = {};
+          rightArm.rotation.x = 0;
+          rightArm.rotation.y = 0;
+          rightArm.rotation.z = 0;
         }
         
         if (rig.bones.head && rig.restPose.head) {
-          rig.bones.head.rotation.x = rig.restPose.head.rotation.x || 0;
-          rig.bones.head.rotation.y = rig.restPose.head.rotation.y || 0;
-          rig.bones.head.rotation.z = rig.restPose.head.rotation.z || 0;
+          // Safely set head rotation
+          if (!rig.bones.head.rotation) rig.bones.head.rotation = {};
+          
+          rig.bones.head.rotation.x = rig.restPose.head.rotation ?
+            (rig.restPose.head.rotation.x || 0) : 0;
+          rig.bones.head.rotation.y = rig.restPose.head.rotation ?
+            (rig.restPose.head.rotation.y || 0) : 0;
+          rig.bones.head.rotation.z = rig.restPose.head.rotation ?
+            (rig.restPose.head.rotation.z || 0) : 0;
         }
         
         rig.animations.swinging = false;

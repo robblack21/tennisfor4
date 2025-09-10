@@ -72,10 +72,19 @@
       border: 3px solid white;
     }
     
-    video {
+    video, .lobby-video {
       width: 160px;
       height: 120px;
       border-radius: 17px;
+      background-color: #000;
+      object-fit: cover;
+    }
+    
+    .lobby-video {
+      width: 250px;
+      height: 180px;
+      border-radius: 25px;
+      display: block !important;
     }
     
     .player-name {
@@ -154,12 +163,19 @@
       border: 2px solid white;
     }
     
-    .lobby-video {
-      width: 250px;
-      height: 180px;
-      border-radius: 25px;
-      box-shadow: 0 4px 8px rgba(0,0,0,0.3);
-      border: 3px solid white;
+    /* Player counter */
+    #player-counter {
+      position: fixed;
+      top: 20px;
+      left: 20px;
+      background: rgba(0, 0, 0, 0.7);
+      color: white;
+      padding: 10px 20px;
+      border-radius: 20px;
+      font-size: 18px;
+      font-weight: bold;
+      z-index: 1000;
+      border: 2px solid white;
     }
     
     .ready-indicator {
@@ -231,6 +247,7 @@
   </style>
 </head>
 <body>
+  <div id="player-counter">Connected Players: <span id="player-count">1</span>/4</div>
   <div id="lobby" style="display: block;">
     <h1>Tennis for 4 - Lobby</h1>
     <div id="lobby-videos"></div>
