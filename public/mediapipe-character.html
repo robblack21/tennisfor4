@@ -125,9 +125,11 @@
     </div>
   </div>
 
-  <!-- Load Three.js and GLTF Loader -->
-  <script crossorigin src="https://unpkg.com/three@0.158.0/build/three.min.js"></script>
-  <script crossorigin src="https://unpkg.com/three@0.158.0/examples/js/loaders/GLTFLoader.js"></script>
+  <!-- Load Three.js from local library -->
+  <script src="lib/three.min.js"></script>
+  
+  <!-- Load GLTFLoader -->
+  <script src="lib/GLTFLoader.js"></script>
   
   <!-- Load MediaPipe -->
   <script type="module">
@@ -209,9 +211,29 @@
       try {
         updateStatus('character-status', 'Character: Loading...', 'warn');
         
+        // Check if GLTFLoader is available
+        if (!THREE.GLTFLoader) {
+          throw new Error('GLTFLoader not available');
+        }
+        
         const loader = new THREE.GLTFLoader();
+        console.log('GLTFLoader created, attempting to load assets/rigged_person.glb');
+        
         const gltf = await new Promise((resolve, reject) => {
-          loader.load('../assets/rigged_character.glb', resolve, undefined, reject);
+          loader.load(
+            'assets/rigged_person.glb',
+            (gltf) => {
+              console.log('GLTF loaded successfully:', gltf);
+              resolve(gltf);
+            },
+            (progress) => {
+              console.log('Loading progress:', progress);
+            },
+            (error) => {
+              console.error('GLTF loading error:', error);
+              reject(error);
+            }
+          );
         });
         
         character = gltf.scene;
@@ -227,12 +249,20 @@
           });
         }
         
-        // Find bones for rigging
+        // Find and log all bones for rigging
+        const bones = {};
         character.traverse((child) => {
-          if (child.isBone) {
-            console.log('Found bone:', child.name);
+          if (child.isBone || child.type === 'Bone') {
+            bones[child.name] = child;
+            console.log('Found bone:', child.name, child);
           }
         });
+        
+        // Store bones for pose control
+        character.userData = character.userData || {};
+        character.userData.bones = bones;
+        
+        console.log('Available bones:', Object.keys(bones));
         
         scene.add(character);
         updateStatus('character-status', 'Character: Loaded ✅', 'good');
@@ -240,7 +270,8 @@
         
       } catch (error) {
         console.error('Error loading character:', error);
-        updateStatus('character-status', 'Character: Failed to load ❌', 'error');
+        console.error('Error details:', error.message, error.stack);
+        updateStatus('character-status', `Character: Failed - ${error.message} ❌`, 'error');
         
         // Create fallback character
         createFallbackCharacter();
