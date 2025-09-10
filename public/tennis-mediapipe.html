@@ -232,11 +232,15 @@
       isPlaying: false
     };
     
-    // Daily.js variables
+    // WebSocket variables for gesture sharing
+    let ws = null;
+    let wsConnected = false;
+    let myPlayerId = Math.floor(Math.random() * 4); // Random player ID 0-3
+    let connectedPlayers = {};
+    
+    // Daily.js variables (for video only)
     let callObject = null;
     let localParticipant = null;
-    let connectedPlayers = {};
-    let myPlayerId = 0;
     
     // Audio variables
     let audioContext;
@@ -302,7 +306,7 @@
       oscillator.stop(audioContext.currentTime + duration);
     }
     
-    // Join Daily.js room with iframe
+    // Join Daily.js room with iframe (for video only)
     async function joinDailyRoom() {
       try {
         const dailyContainer = document.getElementById('daily-container');
@@ -314,11 +318,11 @@
         // Set the iframe source to the Daily.js room
         dailyIframe.src = 'https://vcroom.daily.co/tennisfor4?layout=grid&showParticipantNames=true&showLeaveButton=true';
         
-        updateStatus('daily-status', 'Daily: Connected ✅', 'good');
-        console.log('✅ Joined Daily.js tennis room');
+        updateStatus('daily-status', 'Daily: Video Connected ✅', 'good');
+        console.log('✅ Joined Daily.js tennis room for video');
         
-        // Initialize the call object for data messaging
-        await initializeDailyCallObject();
+        // Initialize WebSocket for gesture data
+        initializeWebSocket();
         
       } catch (error) {
         console.error('Error joining Daily room:', error);
@@ -326,132 +330,168 @@
       }
     }
     
-    // Initialize Daily.js call object for data messaging
-    async function initializeDailyCallObject() {
+    // Initialize WebSocket for gesture sharing
+    function initializeWebSocket() {
       try {
-        if (!window.DailyIframe) {
-          throw new Error('Daily.js not loaded');
-        }
+        // Try connecting to a local WebSocket server first
+        ws = new WebSocket('ws://localhost:8082');
         
-        callObject = DailyIframe.createCallObject({
-          audioSource: false, // Audio handled by iframe
-          videoSource: false  // Video handled by iframe
-        });
+        ws.onopen = function() {
+          wsConnected = true;
+          updateStatus('game-status-detail', `WebSocket: Connected as Player ${myPlayerId + 1} ✅`, 'good');
+          console.log('✅ WebSocket connected for gesture sharing');
+          
+          // Send initial player join message
+          ws.send(JSON.stringify({
+            type: 'playerJoin',
+            playerId: myPlayerId,
+            timestamp: Date.now()
+          }));
+          
+          updatePlayerCount();
+        };
         
-        // Set up event listeners for data messaging
-        callObject.on('joined-meeting', handleJoinedMeeting);
-        callObject.on('participant-joined', handleParticipantJoined);
-        callObject.on('participant-left', handleParticipantLeft);
-        callObject.on('app-message', handleAppMessage);
-        callObject.on('error', handleDailyError);
+        ws.onmessage = function(event) {
+          try {
+            const data = JSON.parse(event.data);
+            handleWebSocketMessage(data);
+          } catch (error) {
+            console.error('Error parsing WebSocket message:', error);
+          }
+        };
         
-        // Join the tennis room for data synchronization
-        await callObject.join({
-          url: 'https://vcroom.daily.co/tennisfor4'
-        });
+        ws.onclose = function() {
+          wsConnected = false;
+          updateStatus('game-status-detail', 'WebSocket: Disconnected ⚠️', 'warn');
+          console.log('WebSocket disconnected, falling back to local mode');
+          
+          // Fallback to localStorage for local testing
+          initializeLocalStorage();
+        };
         
-        console.log('✅ Daily.js call object initialized for data sync');
+        ws.onerror = function(error) {
+          console.error('WebSocket error:', error);
+          updateStatus('game-status-detail', 'WebSocket: Error, using local mode ⚠️', 'warn');
+          
+          // Fallback to localStorage
+          initializeLocalStorage();
+        };
         
       } catch (error) {
-        console.error('Daily.js call object initialization failed:', error);
-        updateStatus('daily-status', 'Daily Data: Failed ❌', 'error');
+        console.error('WebSocket initialization failed:', error);
+        initializeLocalStorage();
       }
     }
     
-    // Handle joining meeting
-    function handleJoinedMeeting(event) {
-      localParticipant = event.participants.local;
-      console.log('Joined meeting as:', localParticipant.user_id);
+    // Fallback to localStorage for local testing
+    function initializeLocalStorage() {
+      updateStatus('game-status-detail', `Local Mode: Player ${myPlayerId + 1} ✅`, 'good');
+      console.log('Using localStorage for gesture sharing (local testing mode)');
       
-      // Assign player ID based on join order
-      const participantCount = Object.keys(event.participants).length;
-      myPlayerId = Math.max(0, participantCount - 1);
-      
-      updateStatus('game-status-detail', `Connected as Player ${myPlayerId + 1} ✅`, 'good');
-      updatePlayerCount();
-    }
-    
-    // Handle participant joined
-    function handleParticipantJoined(event) {
-      console.log('Participant joined:', event.participant.user_id);
-      updatePlayerCount();
-    }
-    
-    // Handle participant left
-    function handleParticipantLeft(event) {
-      console.log('Participant left:', event.participant.user_id);
-      delete connectedPlayers[event.participant.user_id];
-      updatePlayerCount();
-    }
-    
-    // Handle app messages (pose data sharing)
-    function handleAppMessage(event) {
-      const { data, fromId } = event;
-      
-      if (data.type === 'pose') {
-        // Apply received pose data to the corresponding player
-        const senderId = Object.keys(connectedPlayers).indexOf(fromId);
-        if (senderId >= 0 && senderId < players.length && players[senderId]) {
-          applyPoseToPlayer(data.pose, players[senderId]);
+      // Set up localStorage listener for cross-tab communication
+      window.addEventListener('storage', function(e) {
+        if (e.key === 'tennisGestures') {
+          try {
+            const data = JSON.parse(e.newValue);
+            if (data.playerId !== myPlayerId) {
+              handleGestureMessage(data);
+            }
+          } catch (error) {
+            console.error('Error parsing localStorage gesture data:', error);
+          }
         }
-      } else if (data.type === 'ballHit') {
-        // Synchronize ball state across all players
-        gameState.ballVelocity = data.ballVelocity;
-        tennisBall.position.copy(data.ballPosition);
-        
-        // Play hit sound for all players
-        playSound(440, 0.2, 0.5); // Tennis hit sound
+      });
+      
+      updatePlayerCount();
+    }
+    
+    // Handle WebSocket messages
+    function handleWebSocketMessage(data) {
+      if (data.playerId === myPlayerId) return; // Ignore own messages
+      
+      switch (data.type) {
+        case 'playerJoin':
+          connectedPlayers[data.playerId] = { joinTime: data.timestamp };
+          updatePlayerCount();
+          break;
+        case 'playerLeave':
+          delete connectedPlayers[data.playerId];
+          updatePlayerCount();
+          break;
+        case 'pose':
+          handleGestureMessage(data);
+          break;
+        case 'ballHit':
+          // Synchronize ball state
+          gameState.ballVelocity = data.ballVelocity;
+          tennisBall.position.copy(data.ballPosition);
+          playSound(440, 0.2, 0.5);
+          break;
       }
     }
     
-    // Handle Daily.js errors
-    function handleDailyError(event) {
-      console.error('Daily.js error:', event);
+    // Handle gesture messages
+    function handleGestureMessage(data) {
+      if (data.type === 'pose' && data.playerId !== myPlayerId) {
+        // Apply received pose to the corresponding player
+        if (data.playerId >= 0 && data.playerId < players.length && players[data.playerId]) {
+          applyPoseToPlayer(data.pose, players[data.playerId]);
+        }
+      }
     }
     
-    // Send pose data to other players
+    // Send pose data via WebSocket or localStorage
     function broadcastPoseData(pose) {
-      if (callObject && pose) {
-        callObject.sendAppMessage({
-          type: 'pose',
-          pose: pose,
-          playerId: myPlayerId
-        });
+      const poseMessage = {
+        type: 'pose',
+        pose: pose,
+        playerId: myPlayerId,
+        timestamp: Date.now()
+      };
+      
+      if (wsConnected && ws.readyState === WebSocket.OPEN) {
+        // Send via WebSocket
+        ws.send(JSON.stringify(poseMessage));
+      } else {
+        // Fallback to localStorage
+        localStorage.setItem('tennisGestures', JSON.stringify(poseMessage));
       }
     }
     
-    // Send ball hit data to other players
+    // Send ball hit data
     function broadcastBallHit() {
-      if (callObject) {
-        callObject.sendAppMessage({
-          type: 'ballHit',
-          ballVelocity: gameState.ballVelocity,
-          ballPosition: tennisBall.position,
-          playerId: myPlayerId
-        });
+      const ballMessage = {
+        type: 'ballHit',
+        ballVelocity: gameState.ballVelocity,
+        ballPosition: tennisBall.position,
+        playerId: myPlayerId,
+        timestamp: Date.now()
+      };
+      
+      if (wsConnected && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify(ballMessage));
+      } else {
+        localStorage.setItem('tennisGestures', JSON.stringify(ballMessage));
       }
     }
     
     // Update player count display
     function updatePlayerCount() {
-      if (callObject) {
-        const participants = callObject.participants();
-        const count = Object.keys(participants).length;
-        document.getElementById('player-count').textContent = count;
-        
-        // Update player indicators
-        const indicators = document.querySelectorAll('.player-indicator');
-        indicators.forEach((indicator, index) => {
-          if (index < count) {
-            indicator.style.opacity = '1';
-            if (index === myPlayerId) {
-              indicator.classList.add('active');
-            }
-          } else {
-            indicator.style.opacity = '0.3';
+      const connectedCount = Object.keys(connectedPlayers).length + 1; // +1 for self
+      document.getElementById('player-count').textContent = connectedCount;
+      
+      // Update player indicators
+      const indicators = document.querySelectorAll('.player-indicator');
+      indicators.forEach((indicator, index) => {
+        if (index < connectedCount || index === myPlayerId) {
+          indicator.style.opacity = '1';
+          if (index === myPlayerId) {
+            indicator.classList.add('active');
           }
-        });
-      }
+        } else {
+          indicator.style.opacity = '0.3';
+        }
+      });
     }
     
     // Initialize the tennis scene
@@ -560,27 +600,65 @@
       console.log('Players created');
     }
     
-    // Create individual player character
+    // Create individual player character with unique appearance
     function createPlayerCharacter(playerId) {
       const characterGroup = new THREE.Group();
       
-      // Body
-      const bodyGeometry = new THREE.CylinderGeometry(0.3, 0.3, 1.5);
-      const bodyMaterial = new THREE.MeshLambertMaterial({ 
-        color: playerId === 0 ? 0x4CAF50 : 0xFF5722 
-      });
+      // Player-specific colors and styles
+      const playerStyles = [
+        { body: 0x4CAF50, head: 0xFFE0BD, name: 'Green Player' },   // Player 0 - Green
+        { body: 0xFF5722, head: 0xFFDBB0, name: 'Red Player' },     // Player 1 - Red
+        { body: 0x2196F3, head: 0xFFE4C4, name: 'Blue Player' },    // Player 2 - Blue
+        { body: 0xFF9800, head: 0xFFE0BD, name: 'Orange Player' }   // Player 3 - Orange
+      ];
+      
+      const style = playerStyles[playerId] || playerStyles[0];
+      
+      // Body with unique shape per player
+      let bodyGeometry;
+      switch (playerId) {
+        case 0: bodyGeometry = new THREE.CylinderGeometry(0.3, 0.3, 1.5); break; // Cylinder
+        case 1: bodyGeometry = new THREE.BoxGeometry(0.5, 1.5, 0.3); break; // Box
+        case 2: bodyGeometry = new THREE.ConeGeometry(0.3, 1.5, 8); break; // Cone
+        case 3:
+          bodyGeometry = new THREE.OctahedronGeometry(0.4);
+          bodyGeometry.scale(1, 2, 1);
+          break; // Octahedron
+        default: bodyGeometry = new THREE.CylinderGeometry(0.3, 0.3, 1.5);
+      }
+      
+      const bodyMaterial = new THREE.MeshLambertMaterial({ color: style.body });
       const body = new THREE.Mesh(bodyGeometry, bodyMaterial);
       body.position.y = 0.75;
       body.castShadow = true;
       characterGroup.add(body);
       
-      // Head
-      const headGeometry = new THREE.SphereGeometry(0.25);
-      const headMaterial = new THREE.MeshLambertMaterial({ color: 0xFFE0BD });
+      // Head with unique style
+      let headGeometry;
+      switch (playerId) {
+        case 0: headGeometry = new THREE.SphereGeometry(0.25); break; // Sphere
+        case 1: headGeometry = new THREE.BoxGeometry(0.4, 0.4, 0.4); break; // Cube
+        case 2: headGeometry = new THREE.ConeGeometry(0.2, 0.5, 6); break; // Cone
+        case 3: headGeometry = new THREE.OctahedronGeometry(0.25); break; // Octahedron
+        default: headGeometry = new THREE.SphereGeometry(0.25);
+      }
+      
+      const headMaterial = new THREE.MeshLambertMaterial({ color: style.head });
       const head = new THREE.Mesh(headGeometry, headMaterial);
       head.position.y = 1.8;
       head.castShadow = true;
       characterGroup.add(head);
+      
+      // Player identification marker
+      const markerGeometry = new THREE.RingGeometry(0.15, 0.25, 8);
+      const markerMaterial = new THREE.MeshBasicMaterial({
+        color: style.body,
+        side: THREE.DoubleSide
+      });
+      const marker = new THREE.Mesh(markerGeometry, markerMaterial);
+      marker.position.y = 2.2;
+      marker.rotation.x = -Math.PI / 2;
+      characterGroup.add(marker);
       
       // Arms for MediaPipe control
       const rightShoulder = new THREE.Object3D();
@@ -594,13 +672,27 @@
       rightShoulder.add(rightUpperArm);
       
       const armGeometry = new THREE.CylinderGeometry(0.08, 0.08, 0.6);
-      const armMaterial = new THREE.MeshLambertMaterial({ 
-        color: playerId === 0 ? 0x4CAF50 : 0xFF5722 
-      });
+      const armMaterial = new THREE.MeshLambertMaterial({ color: style.body });
       const rightArmMesh = new THREE.Mesh(armGeometry, armMaterial);
       rightArmMesh.position.y = -0.3;
       rightArmMesh.castShadow = true;
       rightUpperArm.add(rightArmMesh);
+      
+      // Left arm for balance
+      const leftShoulder = new THREE.Object3D();
+      leftShoulder.position.set(-0.4, 1.4, 0);
+      leftShoulder.name = 'LeftShoulder';
+      characterGroup.add(leftShoulder);
+      
+      const leftUpperArm = new THREE.Object3D();
+      leftUpperArm.position.set(0, -0.3, 0);
+      leftUpperArm.name = 'LeftUpperArm';
+      leftShoulder.add(leftUpperArm);
+      
+      const leftArmMesh = new THREE.Mesh(armGeometry.clone(), armMaterial.clone());
+      leftArmMesh.position.y = -0.3;
+      leftArmMesh.castShadow = true;
+      leftUpperArm.add(leftArmMesh);
       
       // Tennis racket
       const racketHandle = new THREE.CylinderGeometry(0.02, 0.02, 0.3);
@@ -614,15 +706,38 @@
       const bones = {
         'RightShoulder': rightShoulder,
         'RightUpperArm': rightUpperArm,
+        'LeftShoulder': leftShoulder,
+        'LeftUpperArm': leftUpperArm,
         'rightArm': rightUpperArm,
+        'leftArm': leftUpperArm,
         'racket': racket
       };
       
-      characterGroup.userData = { 
-        bones: bones, 
+      characterGroup.userData = {
+        bones: bones,
         playerId: playerId,
-        lastSwingTime: 0
+        lastSwingTime: 0,
+        playerName: style.name
       };
+      
+      // Add name label
+      const canvas = document.createElement('canvas');
+      canvas.width = 256;
+      canvas.height = 64;
+      const context = canvas.getContext('2d');
+      context.fillStyle = `#${style.body.toString(16).padStart(6, '0')}`;
+      context.fillRect(0, 0, 256, 64);
+      context.fillStyle = 'white';
+      context.font = 'bold 20px Arial';
+      context.textAlign = 'center';
+      context.fillText(`P${playerId + 1}`, 128, 40);
+      
+      const texture = new THREE.CanvasTexture(canvas);
+      const labelMaterial = new THREE.MeshBasicMaterial({ map: texture, transparent: true });
+      const labelGeometry = new THREE.PlaneGeometry(1, 0.25);
+      const label = new THREE.Mesh(labelGeometry, labelMaterial);
+      label.position.y = 2.5;
+      characterGroup.add(label);
       
       return characterGroup;
     }
@@ -749,6 +864,9 @@
       const wrist = pose[16]; // Right wrist
       const elbow = pose[14]; // Right elbow
       const shoulder = pose[12]; // Right shoulder
+      const leftWrist = pose[15]; // Left wrist
+      const leftElbow = pose[13]; // Left elbow
+      const leftShoulder = pose[11]; // Left shoulder
       
       if (!wrist || !elbow || !shoulder) return;
       
@@ -757,11 +875,11 @@
       
       // Calculate swing motion
       const swingVelocity = Math.sqrt(
-        Math.pow(wrist.x - shoulder.x, 2) + 
+        Math.pow(wrist.x - shoulder.x, 2) +
         Math.pow(wrist.y - shoulder.y, 2)
       );
       
-      // Apply arm rotation
+      // Apply right arm rotation
       if (bones.rightArm) {
         const armAngleX = (wrist.y - shoulder.y) * 3;
         const armAngleZ = (wrist.x - shoulder.x) * 3;
@@ -770,9 +888,18 @@
         bones.rightArm.rotation.z = armAngleZ;
       }
       
-      // Detect tennis swing
-      if (swingVelocity > 0.3 && Date.now() - player.userData.lastSwingTime > 800) {
-        console.log('🎾 Tennis swing detected!', { velocity: swingVelocity });
+      // Apply left arm rotation for more realistic movement
+      if (bones.leftArm && leftWrist && leftElbow && leftShoulder) {
+        const leftArmAngleX = (leftWrist.y - leftShoulder.y) * 3;
+        const leftArmAngleZ = (leftWrist.x - leftShoulder.x) * 3;
+        
+        bones.leftArm.rotation.x = leftArmAngleX;
+        bones.leftArm.rotation.z = leftArmAngleZ;
+      }
+      
+      // Only trigger ball hits for the local player (not remote pose data)
+      if (player.userData.playerId === myPlayerId && swingVelocity > 0.3 && Date.now() - player.userData.lastSwingTime > 800) {
+        console.log(`🎾 ${player.userData.playerName} swing detected!`, { velocity: swingVelocity });
         player.userData.lastSwingTime = Date.now();
         
         // Play swing sound
@@ -911,13 +1038,36 @@
     // Initialize everything
     init();
     
-    // Auto-setup MediaPipe when script loads
+    // Auto-setup everything when script loads
     setTimeout(async () => {
+      console.log('🚀 Auto-starting tennis experience...');
+      
+      // Setup MediaPipe first
       await setupMediaPipe();
+      
+      // Auto-enable all features for seamless experience
+      setTimeout(() => {
+        console.log('🚀 Auto-joining multiplayer...');
+        joinDailyRoom();
+      }, 2000);
+      
+      setTimeout(() => {
+        console.log('🚀 Auto-starting camera and pose tracking...');
+        startCamera();
+      }, 3000);
+      
     }, 1000);
     
     // Clean up on page unload
     window.addEventListener('beforeunload', () => {
+      if (ws && wsConnected) {
+        ws.send(JSON.stringify({
+          type: 'playerLeave',
+          playerId: myPlayerId,
+          timestamp: Date.now()
+        }));
+        ws.close();
+      }
       if (callObject) {
         callObject.leave();
         callObject.destroy();
