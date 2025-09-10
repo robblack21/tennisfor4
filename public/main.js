@@ -876,8 +876,18 @@ async function setupDaily() {
     localVideo.muted = true;
     daily.setLocalVideo(localVideo);
 
-    // Add to lobby
-    addToLobby(myId, localVideo);
+    // Add local player to lobby with video
+    console.log('Adding local player to lobby with video');
+    try {
+      addToLobby(myId, localVideo);
+      
+      // Make sure the local player is shown as the first player
+      if (gameState.players.indexOf(myId) === -1) {
+        gameState.players.unshift(myId);
+      }
+    } catch (error) {
+      console.error('Error adding local player to lobby:', error);
+    }
 
     // Pass stream to MediaPipe
     if (poseLandmarker) {
@@ -981,8 +991,26 @@ async function setupDaily() {
 
 function handleParticipantJoined(event) {
   const participant = event.participant;
+  console.log('Participant joined:', participant.sessionId);
+  
   gameState.players.push(participant.sessionId);
   readyStates[participant.sessionId] = false;
+  
+  // Create video element for the participant
+  const videoElement = document.createElement('video');
+  videoElement.id = `lobby-video-${participant.sessionId}`;
+  videoElement.autoplay = true;
+  videoElement.muted = true;
+  videoElement.className = 'lobby-video';
+  
+  try {
+    console.log('Setting participant video:', participant.sessionId);
+    daily.setParticipantVideo(participant.sessionId, videoElement);
+    addToLobby(participant.sessionId, videoElement);
+  } catch (error) {
+    console.error('Error setting participant video:', error);
+  }
+  
   updateLobby();
 
   if (appState === 'game') {
@@ -1097,14 +1125,52 @@ function createWiiRacket() {
 
 function handleParticipantUpdated(event) {
   const participant = event.participant;
-  if (participant.video && !document.getElementById(`lobby-video-${participant.sessionId}`)) {
-    const videoElement = document.createElement('video');
-    videoElement.id = `lobby-video-${participant.sessionId}`;
-    videoElement.autoplay = true;
-    videoElement.muted = true;
-    videoElement.className = 'lobby-video';
-    daily.setParticipantVideo(participant.sessionId, videoElement);
-    addToLobby(participant.sessionId, videoElement);
+  console.log('Participant updated:', participant.sessionId, participant);
+  
+  // Check if this participant has video
+  if (participant.video) {
+    const existingVideo = document.getElementById(`lobby-video-${participant.sessionId}`);
+    
+    if (!existingVideo) {
+      console.log('Creating new video element for participant:', participant.sessionId);
+      const videoElement = document.createElement('video');
+      videoElement.id = `lobby-video-${participant.sessionId}`;
+      videoElement.autoplay = true;
+      videoElement.muted = participant.sessionId !== myId; // Only mute other participants
+      videoElement.className = 'lobby-video';
+      
+      try {
+        daily.setParticipantVideo(participant.sessionId, videoElement);
+        
+        // Find existing container or create new one
+        const container = document.getElementById(`video-container-${participant.sessionId}`);
+        if (container) {
+          // Replace placeholder if it exists
+          const placeholder = container.querySelector('.video-placeholder');
+          if (placeholder) {
+            container.replaceChild(videoElement, placeholder);
+          } else {
+            // Add as first child
+            container.insertBefore(videoElement, container.firstChild);
+          }
+        } else {
+          // Add to lobby if no container exists
+          addToLobby(participant.sessionId, videoElement);
+        }
+        
+        console.log('Video element added for participant:', participant.sessionId);
+      } catch (error) {
+        console.error('Error setting participant video:', error);
+      }
+    } else {
+      console.log('Video element already exists for participant:', participant.sessionId);
+    }
+  }
+  
+  // Update ready state if changed
+  if (participant.userData && participant.userData.ready !== undefined) {
+    readyStates[participant.sessionId] = participant.userData.ready;
+    updateLobby();
   }
 }
 
@@ -1820,28 +1886,66 @@ function animatePointScored(team) {
 }
 
 function addToLobby(id, videoElement) {
+  console.log('Adding player to lobby:', id);
+  
   const lobbyVideos = document.getElementById('lobby-videos');
+  if (!lobbyVideos) {
+    console.error('Lobby videos container not found');
+    return;
+  }
+  
+  // Create team containers if they don't exist
   const team1 = document.getElementById('team1') || document.createElement('div');
   team1.id = 'team1';
   team1.className = 'team';
-  team1.innerHTML = '<h2>Team 1</h2>';
+  if (!team1.querySelector('h2')) {
+    team1.innerHTML = '<h2>Team 1 (0/2)</h2>';
+  }
+  
   const team2 = document.getElementById('team2') || document.createElement('div');
   team2.id = 'team2';
   team2.className = 'team';
-  team2.innerHTML = '<h2>Team 2</h2>';
+  if (!team2.querySelector('h2')) {
+    team2.innerHTML = '<h2>Team 2 (0/2)</h2>';
+  }
 
   if (!document.getElementById('team1')) lobbyVideos.appendChild(team1);
   if (!document.getElementById('team2')) lobbyVideos.appendChild(team2);
 
+  // Check if this player is already in the lobby
+  if (document.getElementById(`video-container-${id}`)) {
+    console.log('Player already in lobby:', id);
+    return;
+  }
+
+  // Create video container
   const container = document.createElement('div');
   container.className = 'video-container';
-  container.appendChild(videoElement);
+  container.id = `video-container-${id}`;
+  
+  // Add player slot number
+  const slotNumber = gameState.players.indexOf(id) + 1;
+  const isLocal = id === myId;
+  
+  // Add video element
+  if (videoElement) {
+    container.appendChild(videoElement);
+  } else {
+    console.warn('No video element provided for player:', id);
+    // Create placeholder
+    const placeholder = document.createElement('div');
+    placeholder.className = 'video-placeholder';
+    placeholder.textContent = 'Camera loading...';
+    container.appendChild(placeholder);
+  }
 
+  // Add player name
   const nameElement = document.createElement('div');
   nameElement.className = 'player-name';
-  nameElement.textContent = id.slice(-4);
+  nameElement.textContent = `${isLocal ? 'You' : 'Player'} (${id.slice(-4)})`;
   container.appendChild(nameElement);
 
+  // Add ready indicator
   const readyIndicator = document.createElement('div');
   readyIndicator.className = 'ready-indicator';
   readyIndicator.id = `ready-${id}`;
@@ -1850,32 +1954,58 @@ function addToLobby(id, videoElement) {
 
   // Assign to teams alternately
   const playerIndex = gameState.players.indexOf(id);
-  if (playerIndex % 2 === 0) {
+  if (playerIndex === -1) {
+    // Local player
+    team1.appendChild(container);
+  } else if (playerIndex % 2 === 0) {
     team1.appendChild(container);
   } else {
     team2.appendChild(container);
   }
+  
+  console.log('Player added to lobby:', id);
 }
 
 function updateLobby() {
   const totalPlayers = gameState.players.length + 1; // +1 for local
   const allJoined = totalPlayers >= 4;
   const allReady = allJoined && Object.values(readyStates).every(ready => ready);
+  
+  // Update player count display
   document.getElementById('ready-btn').disabled = !allJoined;
-  document.getElementById('ready-status').textContent = allJoined ? (allReady ? 'All ready! Starting game...' : 'All players joined! Click ready.') : `Waiting for players... (${totalPlayers}/4)`;
-
+  document.getElementById('ready-status').textContent = allJoined ?
+    (allReady ? 'All ready! Starting game...' : 'All players joined! Click ready.') :
+    `Waiting for players... (${totalPlayers}/4)`;
+  
+  // Update player slots
+  const team1 = document.getElementById('team1');
+  const team2 = document.getElementById('team2');
+  
+  if (team1) {
+    team1.querySelector('h2').textContent = `Team 1 (${Math.ceil(totalPlayers/2) >= 2 ? '2' : Math.ceil(totalPlayers/2)}/2)`;
+  }
+  
+  if (team2) {
+    team2.querySelector('h2').textContent = `Team 2 (${Math.floor(totalPlayers/2) >= 2 ? '2' : Math.floor(totalPlayers/2)}/2)`;
+  }
+  
+  // Update ready indicators
   for (const id in readyStates) {
     const indicator = document.getElementById(`ready-${id}`);
     if (indicator) {
       indicator.textContent = readyStates[id] ? 'Ready' : 'Not Ready';
       indicator.style.color = readyStates[id] ? 'green' : 'red';
+      indicator.style.backgroundColor = readyStates[id] ? 'rgba(0,255,0,0.2)' : 'rgba(255,0,0,0.2)';
     }
   }
 
+  // Start game if all players are ready
   if (allReady) {
     daily.sendData(JSON.stringify({ type: 'start' }));
     startGame();
   }
+  
+  console.log('Lobby updated. Total players:', totalPlayers);
 }
 
 function startGame() {
