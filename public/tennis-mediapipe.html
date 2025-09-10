@@ -143,17 +143,37 @@
       <div style="display: flex; flex-wrap: wrap;">
         <button onclick="startCamera()">Start Camera</button>
         <button onclick="togglePoseTracking()">Toggle Pose</button>
+        <button onclick="joinDailyRoom()">Join Multiplayer</button>
         <button onclick="resetGame()">Reset Game</button>
         <button onclick="toggleFullscreen()">Fullscreen</button>
       </div>
       
+      <!-- Daily.js Video Call Interface -->
+      <div id="daily-container" style="display: none;">
+        <div style="margin: 10px 0; font-size: 12px; color: #ccc;">
+          Multiplayer Video Call:
+        </div>
+        <iframe
+          id="daily-iframe"
+          width="100%"
+          height="200"
+          style="border-radius: 8px; border: none;"
+          allow="camera; microphone; fullscreen; display-capture; autoplay">
+        </iframe>
+      </div>
+      
+      <!-- MediaPipe Camera (for pose tracking) -->
       <div class="video-container">
+        <div style="font-size: 11px; color: #ccc; margin-bottom: 5px;">
+          Pose Tracking Camera:
+        </div>
         <video id="webcam" autoplay muted playsinline></video>
       </div>
       
       <div id="status-container">
         <div class="status" id="camera-status">Camera: Not started</div>
         <div class="status" id="mediapipe-status">MediaPipe: Loading...</div>
+        <div class="status" id="daily-status">Daily: Not connected</div>
         <div class="status" id="game-status-detail">Game: Ready</div>
       </div>
       
@@ -177,6 +197,9 @@
   <!-- Load Three.js and GLTFLoader -->
   <script src="lib/three.min.js"></script>
   <script src="lib/GLTFLoader.js"></script>
+  
+  <!-- Load Daily.js -->
+  <script crossorigin src="https://unpkg.com/@daily-co/daily-js@0.64.0/dist/daily-iframe.js"></script>
   
   <!-- Load MediaPipe -->
   <script type="module">
@@ -208,6 +231,17 @@
       team2Score: 0,
       isPlaying: false
     };
+    
+    // Daily.js variables
+    let callObject = null;
+    let localParticipant = null;
+    let connectedPlayers = {};
+    let myPlayerId = 0;
+    
+    // Audio variables
+    let audioContext;
+    let backgroundMusic;
+    let audioInitialized = false;
     
     // Update status function
     function updateStatus(elementId, text, className) {
@@ -268,31 +302,59 @@
       oscillator.stop(audioContext.currentTime + duration);
     }
     
-    // Initialize Daily.js
-    async function initializeDaily() {
+    // Join Daily.js room with iframe
+    async function joinDailyRoom() {
       try {
+        const dailyContainer = document.getElementById('daily-container');
+        const dailyIframe = document.getElementById('daily-iframe');
+        
+        // Show the Daily.js iframe
+        dailyContainer.style.display = 'block';
+        
+        // Set the iframe source to the Daily.js room
+        dailyIframe.src = 'https://vcroom.daily.co/tennisfor4?layout=grid&showParticipantNames=true&showLeaveButton=true';
+        
+        updateStatus('daily-status', 'Daily: Connected ✅', 'good');
+        console.log('✅ Joined Daily.js tennis room');
+        
+        // Initialize the call object for data messaging
+        await initializeDailyCallObject();
+        
+      } catch (error) {
+        console.error('Error joining Daily room:', error);
+        updateStatus('daily-status', 'Daily: Failed ❌', 'error');
+      }
+    }
+    
+    // Initialize Daily.js call object for data messaging
+    async function initializeDailyCallObject() {
+      try {
+        if (!window.DailyIframe) {
+          throw new Error('Daily.js not loaded');
+        }
+        
         callObject = DailyIframe.createCallObject({
-          audioSource: false, // We're using MediaPipe, not Daily's audio
-          videoSource: false  // We're using MediaPipe camera
+          audioSource: false, // Audio handled by iframe
+          videoSource: false  // Video handled by iframe
         });
         
-        // Set up event listeners
+        // Set up event listeners for data messaging
         callObject.on('joined-meeting', handleJoinedMeeting);
         callObject.on('participant-joined', handleParticipantJoined);
         callObject.on('participant-left', handleParticipantLeft);
         callObject.on('app-message', handleAppMessage);
         callObject.on('error', handleDailyError);
         
-        // Join the tennis room
+        // Join the tennis room for data synchronization
         await callObject.join({
           url: 'https://vcroom.daily.co/tennisfor4'
         });
         
-        console.log('✅ Connected to Daily.js tennis room');
+        console.log('✅ Daily.js call object initialized for data sync');
         
       } catch (error) {
-        console.error('Daily.js initialization failed:', error);
-        updateStatus('game-status-detail', 'Multiplayer: Failed ❌', 'error');
+        console.error('Daily.js call object initialization failed:', error);
+        updateStatus('daily-status', 'Daily Data: Failed ❌', 'error');
       }
     }
     
@@ -618,10 +680,8 @@
             togglePoseTracking();
           }
           
-          // Initialize Daily.js if not already connected
-          if (!callObject) {
-            initializeDaily();
-          }
+          // Show join multiplayer button helper
+          updateStatus('daily-status', 'Daily: Click "Join Multiplayer" ▶️', 'warn');
         };
         
       } catch (error) {
@@ -742,6 +802,12 @@
         gameState.ballVelocity.z = hitDirection.z * swingPower * 8;
         
         console.log('🎾 Ball hit!', gameState.ballVelocity);
+        
+        // Play ball hit sound
+        playSound(440, 0.2, 0.5);
+        
+        // Broadcast ball hit to other players
+        broadcastBallHit();
       }
     }
     
@@ -773,6 +839,9 @@
         gameState.ballVelocity.y = Math.abs(gameState.ballVelocity.y) * 0.7;
         gameState.ballVelocity.x *= 0.8;
         gameState.ballVelocity.z *= 0.8;
+        
+        // Play bounce sound
+        playSound(330, 0.1, 0.2);
       }
       
       // Court bounds
@@ -846,6 +915,17 @@
     setTimeout(async () => {
       await setupMediaPipe();
     }, 1000);
+    
+    // Clean up on page unload
+    window.addEventListener('beforeunload', () => {
+      if (callObject) {
+        callObject.leave();
+        callObject.destroy();
+      }
+      if (backgroundMusic && backgroundMusic.oscillator) {
+        backgroundMusic.oscillator.stop();
+      }
+    });
   </script>
 </body>
 </html>
