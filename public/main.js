@@ -117,30 +117,81 @@ let cameraShake = {
   offsetY: 0,
   offsetZ: 0
 };
-let gameState = {
-  score: [0, 0],         // Current point score (0, 15, 30, 40, game)
-  games: [0, 0],         // Games won in current set
-  sets: [0, 0],          // Sets won in match
-  currentSet: 0,         // Current set (0-2 for three sets)
-  serving: 0,            // Index of serving player
-  players: [],           // Player IDs
-  mode: 'doubles',       // Game mode: 'singles' (1v1) or 'doubles' (2v2)
-  gamePoint: false,      // Is this game point?
-  setPoint: false,       // Is this set point?
-  matchPoint: false,     // Is this match point?
-  deuce: false,          // Is the score at deuce?
-  advantage: null,       // Which team has advantage (0 or 1, null if not at advantage)
-  lastPoint: null,       // Which team scored last point
-  lastPointTime: 0,      // When the last point was scored
-  inTiebreak: false,     // Whether we're in a tiebreak game
-  tiebreakScore: [0, 0], // Score in the tiebreak (first to 7, win by 2)
-  servingInTiebreak: 0   // Player serving in tiebreak (changes every 2 points)
-};
+class GameStateManager {
+  constructor() {
+    this.gameState = {
+      score: [0, 0],
+      games: [0, 0],
+      sets: [0, 0],
+      currentSet: 0,
+      serving: 0,
+      players: [],
+      mode: 'doubles',
+      gamePoint: false,
+      setPoint: false,
+      matchPoint: false,
+      deuce: false,
+      advantage: null,
+      lastPoint: null,
+      lastPointTime: 0,
+      inTiebreak: false,
+      tiebreakScore: [0, 0],
+      servingInTiebreak: 0,
+    };
+    this.readyStates = {};
+  }
+
+  addPlayer(playerId) {
+    if (this.gameState.players.indexOf(playerId) === -1) {
+      this.gameState.players.push(playerId);
+      this.readyStates[playerId] = false;
+      this.broadcast();
+    }
+  }
+
+  removePlayer(playerId) {
+    const index = this.gameState.players.indexOf(playerId);
+    if (index > -1) {
+      this.gameState.players.splice(index, 1);
+      delete this.readyStates[playerId];
+      this.broadcast();
+    }
+  }
+
+  setReady(playerId, isReady) {
+    this.readyStates[playerId] = isReady;
+    this.broadcast();
+  }
+
+  setMode(mode) {
+    this.gameState.mode = mode;
+    this.broadcast();
+  }
+
+  setState(newState) {
+    this.gameState = newState.state;
+    this.readyStates = newState.readyStates;
+    updateLobby();
+    updateUI();
+  }
+
+  broadcast() {
+    if (isHost) {
+      daily.sendData(JSON.stringify({
+        type: 'game-state',
+        state: this.gameState,
+        readyStates: this.readyStates,
+      }));
+    }
+  }
+}
+
+const gameManager = new GameStateManager();
+let { gameState } = gameManager;
 let myId;
 let isHost = false;
 let currentPose = null;
 let audioContext = null;
-let readyStates = {};
 let statusIndicators = [];
 let ballTrail;
 let impactParticles = [];
@@ -1102,6 +1153,9 @@ async function setupDaily() {
     if (Object.keys(participants).length === 1) {
       isHost = true;
       console.log('This client is the host.');
+      gameManager.addPlayer(myId);
+    } else {
+      daily.sendData(JSON.stringify({ type: 'request-state' }));
     }
 
     // Set up event listeners with better error handling
@@ -1221,13 +1275,8 @@ async function setupDaily() {
 
     // Ready button
     document.getElementById('ready-btn').addEventListener('click', () => {
-      readyStates[myId] = !readyStates[myId]; // Toggle ready state
-      if (isHost) {
-        broadcastGameState();
-      } else {
-        daily.sendData(JSON.stringify({ type: 'ready', id: myId, ready: readyStates[myId] }));
-      }
-      updateLobby();
+      const isReady = !gameManager.readyStates[myId];
+      gameManager.setReady(myId, isReady);
     });
     
     // Add game mode selector
@@ -1367,81 +1416,10 @@ async function setupDaily() {
 function handleParticipantJoined(event) {
   const participant = event.participant;
   console.log('Participant joined:', participant.sessionId);
-
   if (isHost) {
-    // Host adds the new player and broadcasts the updated state
-    if (gameState.players.indexOf(participant.sessionId) === -1) {
-      gameState.players.push(participant.sessionId);
-      readyStates[participant.sessionId] = false;
-      broadcastGameState();
-    }
-  } else {
-    // Non-host clients request the game state from the host
-    daily.sendData(JSON.stringify({ type: 'request-state', id: myId }));
+    gameManager.addPlayer(participant.sessionId);
   }
-
-  // All clients create the video element for the new participant
   createParticipantVideoElement(participant.sessionId);
-  if (appState === 'game') {
-    // Check if we've reached the maximum players for this mode
-    const playerIndex = gameState.players.indexOf(participant.sessionId);
-    if ((gameState.mode === 'singles' && playerIndex >= 2) ||
-        (gameState.mode === 'doubles' && playerIndex >= 4)) {
-      console.log(`Player ${participant.sessionId} joined but not added to game (max players reached for ${gameState.mode} mode)`);
-      return;
-    }
-    
-    // Create Wii-style racket for new player
-    const racket = createWiiRacket();
-    
-    // Position racket based on game mode and player index
-    let positions;
-    
-    if (gameState.mode === 'singles') {
-      // Singles mode - one player on each side of the net
-      positions = [
-        { x: 0, z: 3 },  // Team 1 player
-        { x: 0, z: -3 }  // Team 2 player
-      ];
-    } else {
-      // Doubles mode - two players on each side of the net
-      positions = [
-        { x: -3, z: 3 },  // Team 1 player 1
-        { x: 3, z: -3 },  // Team 2 player 1
-        { x: 3, z: 3 },   // Team 1 player 2
-        { x: -3, z: -3 }  // Team 2 player 2
-      ];
-    }
-    
-    if (positions[playerIndex]) {
-      racket.position.set(positions[playerIndex].x, 0.5, positions[playerIndex].z);
-    }
-
-    rackets[participant.sessionId] = racket;
-    scene.add(racket);
-    
-    // Create character for the player
-    const teamIndex = playerIndex % 2;
-    const teamKey = teamIndex === 0 ? 'team1' : 'team2';
-    
-    // Clone the character model for this player
-    const character = characterModels[teamKey].clone();
-    character.position.set(
-      racket.position.x,
-      0, // Place on ground
-      racket.position.z + ((positions[playerIndex].z > 0) ? -0.5 : 0.5) // Offset from racket
-    );
-    
-    // Rotate character to face the net
-    if (positions[playerIndex].z > 0) {
-      character.rotation.y = Math.PI; // Face forward (toward negative Z)
-    }
-    
-    characters[participant.sessionId] = character;
-    scene.add(character);
-    
-    console.log(`Added player ${participant.sessionId} to game in ${gameState.mode} mode at position:`, positions[playerIndex]);
-  }
 }
 
 function createWiiRacket() {
@@ -1567,28 +1545,8 @@ function handleParticipantUpdated(event) {
 function handleParticipantLeft(event) {
   const participantId = event.participant.sessionId;
   console.log('Participant left:', participantId);
-
   if (isHost) {
-    const index = gameState.players.indexOf(participantId);
-    if (index > -1) {
-      gameState.players.splice(index, 1);
-      delete readyStates[participantId];
-      broadcastGameState();
-    }
-  }
-
-  // All clients remove the video container and 3D objects
-  const container = document.getElementById(`video-container-${participantId}`);
-  if (container) {
-    container.remove();
-  }
-  if (rackets[participantId]) {
-    scene.remove(rackets[participantId]);
-    delete rackets[participantId];
-  }
-  if (characters[participantId]) {
-    scene.remove(characters[participantId]);
-    delete characters[participantId];
+    gameManager.removePlayer(participantId);
   }
 }
 
@@ -1600,38 +1558,24 @@ function handleData(event) {
     switch (data.type) {
       case 'request-state':
         if (isHost) {
-          console.log(`Received state request from ${fromId}`);
-          daily.sendData(JSON.stringify({ type: 'game-state', state: gameState }), fromId);
+          gameManager.broadcast();
         }
         break;
       case 'game-state':
-        console.log(`Received game state from host`);
-        gameState = data.state;
-        // Ensure all players have video elements
-        gameState.players.forEach(playerId => {
-          if (!document.getElementById(`video-container-${playerId}`)) {
-            createParticipantVideoElement(playerId);
-          }
-        });
-        updateLobby();
-        updateUI();
+        gameManager.setState(data);
         break;
       case 'ready':
-        readyStates[data.id] = data.ready;
         if (isHost) {
-          broadcastGameState();
+          gameManager.setReady(data.id, data.ready);
         }
-        updateLobby();
         break;
       case 'start':
         startGame();
         break;
       case 'mode':
-        gameState.mode = data.mode;
         if (isHost) {
-          broadcastGameState();
+          gameManager.setMode(data.mode);
         }
-        updateLobby();
         break;
       case 'swing':
         if (!inputBuffer[data.t]) {
@@ -1640,7 +1584,6 @@ function handleData(event) {
         inputBuffer[data.t][fromId] = data.swing;
         break;
       default:
-        // Handle other data types if necessary
         break;
     }
   } catch (error) {
@@ -2448,7 +2391,7 @@ function updateLobby() {
   // Determine required players based on game mode
   const requiredPlayers = gameState.mode === 'singles' ? 2 : 4;
   const allJoined = totalPlayers >= requiredPlayers;
-  const allReady = allJoined && gameState.players.every(p => readyStates[p]);
+  const allReady = allJoined && gameManager.gameState.players.every(p => gameManager.readyStates[p]);
   
   // Update global player counter
   const playerCountElement = document.getElementById('player-count');
@@ -2495,12 +2438,12 @@ function updateLobby() {
   }
   
   // Update ready indicators
-  for (const id in readyStates) {
+  for (const id in gameManager.readyStates) {
     const indicator = document.getElementById(`ready-${id}`);
     if (indicator) {
-      indicator.textContent = readyStates[id] ? 'Ready' : 'Not Ready';
-      indicator.style.color = readyStates[id] ? 'green' : 'red';
-      indicator.style.backgroundColor = readyStates[id] ? 'rgba(0,255,0,0.2)' : 'rgba(255,0,0,0.2)';
+      indicator.textContent = gameManager.readyStates[id] ? 'Ready' : 'Not Ready';
+      indicator.style.color = gameManager.readyStates[id] ? 'green' : 'red';
+      indicator.style.backgroundColor = gameManager.readyStates[id] ? 'rgba(0,255,0,0.2)' : 'rgba(255,0,0,0.2)';
     }
   }
 
@@ -2736,11 +2679,6 @@ function loadCustomCharacterModel(url, teamIndex) {
 // Start the app
 init();
 
-function broadcastGameState() {
-  if (!isHost) return;
-  console.log('Broadcasting game state:', gameState);
-  daily.sendData(JSON.stringify({ type: 'game-state', state: gameState }));
-}
 
 function createParticipantVideoElement(participantId) {
   if (document.getElementById(`video-container-${participantId}`)) {
