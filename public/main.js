@@ -1221,8 +1221,12 @@ async function setupDaily() {
 
     // Ready button
     document.getElementById('ready-btn').addEventListener('click', () => {
-      readyStates[myId] = true;
-      daily.sendData(JSON.stringify({ type: 'ready', id: myId, ready: true }));
+      readyStates[myId] = !readyStates[myId]; // Toggle ready state
+      if (isHost) {
+        broadcastGameState();
+      } else {
+        daily.sendData(JSON.stringify({ type: 'ready', id: myId, ready: readyStates[myId] }));
+      }
       updateLobby();
     });
     
@@ -2444,7 +2448,7 @@ function updateLobby() {
   // Determine required players based on game mode
   const requiredPlayers = gameState.mode === 'singles' ? 2 : 4;
   const allJoined = totalPlayers >= requiredPlayers;
-  const allReady = allJoined && Object.values(readyStates).every(ready => ready);
+  const allReady = allJoined && gameState.players.every(p => readyStates[p]);
   
   // Update global player counter
   const playerCountElement = document.getElementById('player-count');
@@ -2741,55 +2745,6 @@ function broadcastGameState() {
 function createParticipantVideoElement(participantId) {
   if (document.getElementById(`video-container-${participantId}`)) {
     return;
-  }
-  
-  function addPlayer(playerId) {
-    if (gameState.players.indexOf(playerId) === -1) {
-      gameState.players.push(playerId);
-      readyStates[playerId] = false;
-  
-      // Create racket and character for the new player
-      if (appState === 'game') {
-        const playerIndex = gameState.players.length - 1;
-        const racket = createWiiRacket();
-        const positions = getPlayerPositions();
-        if (positions[playerIndex]) {
-          racket.position.set(positions[playerIndex].x, 0.5, positions[playerIndex].z);
-        }
-        rackets[playerId] = racket;
-        scene.add(racket);
-  
-        const teamIndex = playerIndex % 2;
-        const teamKey = teamIndex === 0 ? 'team1' : 'team2';
-        const character = characterModels[teamKey].clone();
-        character.position.set(
-          racket.position.x,
-          0,
-          racket.position.z + (positions[playerIndex].z > 0 ? -0.5 : 0.5)
-        );
-        if (positions[playerIndex].z > 0) {
-          character.rotation.y = Math.PI;
-        }
-        characters[playerId] = character;
-        scene.add(character);
-      }
-    }
-  }
-  
-  function getPlayerPositions() {
-    if (gameState.mode === 'singles') {
-      return [
-        { x: 0, z: 3 },
-        { x: 0, z: -3 }
-      ];
-    } else {
-      return [
-        { x: -3, z: 3 },
-        { x: 3, z: -3 },
-        { x: 3, z: 3 },
-        { x: -3, z: -3 }
-      ];
-    }
   }
 
   const videoElement = document.createElement('video');
