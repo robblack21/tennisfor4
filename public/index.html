@@ -5,25 +5,219 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Tennis for 4 - Wii Sports Replica</title>
   <style>
-    body { margin: 0; overflow: hidden; font-family: 'Wii', Arial, sans-serif; background: linear-gradient(135deg, #4CAF50, #2196F3); }
-    #game { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
-    #ui { position: absolute; top: 20px; right: 20px; z-index: 10; background: rgba(255,255,255,0.9); color: #333; padding: 15px; border-radius: 15px; box-shadow: 0 4px 8px rgba(0,0,0,0.3); font-size: 18px; font-weight: bold; }
-    #videos { position: absolute; bottom: 20px; left: 20px; display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px; z-index: 10; max-width: 340px; }
-    .video-container { position: relative; border-radius: 10px; overflow: hidden; box-shadow: 0 4px 8px rgba(0,0,0,0.3); }
-    video { width: 160px; height: 120px; border-radius: 10px; }
-    .player-name { position: absolute; bottom: 5px; left: 5px; background: rgba(0,0,0,0.7); color: white; padding: 3px 8px; border-radius: 5px; font-size: 12px; font-weight: bold; }
+    @font-face {
+      font-family: 'Wii';
+      src: url('https://fonts.cdnfonts.com/css/rodin-nhg') format('woff2');
+      font-weight: normal;
+      font-style: normal;
+    }
+    
+    /* Wii Sports color palette */
+    :root {
+      --wii-blue: #00a2e8;
+      --wii-light-blue: #7ecef4;
+      --wii-dark-blue: #0072bc;
+      --wii-orange: #ff7f27;
+      --wii-green: #22b14c;
+      --wii-light-gray: #e6e6e6;
+      --wii-dark-gray: #58595b;
+    }
+    
+    body {
+      margin: 0;
+      overflow: hidden;
+      font-family: 'Wii', 'Myriad Pro', Arial, sans-serif;
+      background: linear-gradient(135deg, var(--wii-green), var(--wii-blue));
+    }
+    
+    /* Game container */
+    #game {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+    }
+    
+    /* UI panel */
+    #ui {
+      position: absolute;
+      top: 20px;
+      right: 20px;
+      z-index: 10;
+      background: linear-gradient(to bottom, var(--wii-light-blue), var(--wii-blue));
+      color: white;
+      padding: 15px 20px;
+      border-radius: 30px;
+      box-shadow: 0 4px 8px rgba(0,0,0,0.3), inset 0 1px 1px rgba(255,255,255,0.7);
+      font-size: 20px;
+      font-weight: bold;
+      border: 2px solid white;
+      text-shadow: 1px 1px 1px rgba(0,0,0,0.3);
+    }
+    
+    /* Video grid */
+    #videos {
+      position: absolute;
+      bottom: 20px;
+      left: 20px;
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 15px;
+      z-index: 10;
+      max-width: 340px;
+    }
+    
+    .video-container {
+      position: relative;
+      border-radius: 20px;
+      overflow: hidden;
+      box-shadow: 0 4px 8px rgba(0,0,0,0.3);
+      border: 3px solid white;
+    }
+    
+    video {
+      width: 160px;
+      height: 120px;
+      border-radius: 17px;
+    }
+    
+    .player-name {
+      position: absolute;
+      bottom: 5px;
+      left: 5px;
+      background: var(--wii-blue);
+      color: white;
+      padding: 5px 10px;
+      border-radius: 15px;
+      font-size: 14px;
+      font-weight: bold;
+      border: 1px solid white;
+      text-shadow: 1px 1px 1px rgba(0,0,0,0.3);
+    }
 
-    #lobby { text-align: center; padding: 40px; background: rgba(255,255,255,0.1) url('./assets/images.jpeg') center/cover no-repeat; border-radius: 20px; margin: 20px; box-shadow: 0 4px 8px rgba(0,0,0,0.2); }
-    #lobby h1 { color: white; font-size: 48px; text-shadow: 2px 2px 4px rgba(0,0,0,0.5); margin-bottom: 20px; }
-    #lobby-videos { display: flex; flex-direction: column; align-items: center; gap: 30px; }
-    .team { display: flex; gap: 30px; align-items: center; }
-    .team h2 { margin: 0; color: white; font-size: 24px; text-shadow: 1px 1px 2px rgba(0,0,0,0.5); }
-    .lobby-video { width: 250px; height: 180px; border-radius: 15px; box-shadow: 0 4px 8px rgba(0,0,0,0.3); }
-    .ready-indicator { margin-top: 10px; font-weight: bold; color: white; font-size: 16px; }
-    #ready-btn { background: #FF5722; color: white; border: none; padding: 15px 30px; border-radius: 25px; font-size: 18px; font-weight: bold; cursor: pointer; box-shadow: 0 4px 8px rgba(0,0,0,0.3); transition: background 0.3s; }
-    #ready-btn:hover { background: #D84315; }
-    #ready-btn:disabled { background: #BDBDBD; cursor: not-allowed; }
-    #ready-status { color: white; font-size: 16px; margin-top: 20px; }
+    /* Lobby styling */
+    #lobby {
+      text-align: center;
+      padding: 40px;
+      background: rgba(255,255,255,0.2);
+      border-radius: 40px;
+      margin: 20px;
+      box-shadow: 0 4px 15px rgba(0,0,0,0.2), inset 0 1px 1px rgba(255,255,255,0.7);
+      border: 4px solid white;
+      max-width: 800px;
+      margin: 40px auto;
+    }
+    
+    #lobby h1 {
+      color: white;
+      font-size: 48px;
+      text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+      margin-bottom: 30px;
+      position: relative;
+      display: inline-block;
+    }
+    
+    #lobby h1:after {
+      content: '';
+      position: absolute;
+      bottom: -10px;
+      left: 10%;
+      width: 80%;
+      height: 4px;
+      background: white;
+      border-radius: 2px;
+    }
+    
+    #lobby-videos {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 40px;
+      margin: 30px 0;
+    }
+    
+    .team {
+      display: flex;
+      gap: 40px;
+      align-items: center;
+      background: rgba(255,255,255,0.2);
+      padding: 20px;
+      border-radius: 30px;
+      border: 2px solid white;
+    }
+    
+    .team h2 {
+      margin: 0;
+      color: white;
+      font-size: 28px;
+      text-shadow: 1px 1px 2px rgba(0,0,0,0.5);
+      background: var(--wii-blue);
+      padding: 8px 20px;
+      border-radius: 20px;
+      border: 2px solid white;
+    }
+    
+    .lobby-video {
+      width: 250px;
+      height: 180px;
+      border-radius: 25px;
+      box-shadow: 0 4px 8px rgba(0,0,0,0.3);
+      border: 3px solid white;
+    }
+    
+    .ready-indicator {
+      margin-top: 15px;
+      font-weight: bold;
+      font-size: 18px;
+      padding: 5px 15px;
+      border-radius: 15px;
+      display: inline-block;
+      border: 2px solid white;
+    }
+    
+    /* Wii-style button */
+    #ready-btn {
+      background: linear-gradient(to bottom, #ff9966, var(--wii-orange));
+      color: white;
+      border: 3px solid white;
+      padding: 15px 40px;
+      border-radius: 30px;
+      font-size: 24px;
+      font-weight: bold;
+      cursor: pointer;
+      box-shadow: 0 4px 8px rgba(0,0,0,0.3), inset 0 1px 1px rgba(255,255,255,0.4);
+      transition: all 0.2s;
+      text-shadow: 1px 1px 1px rgba(0,0,0,0.3);
+      margin-top: 20px;
+    }
+    
+    #ready-btn:hover {
+      background: linear-gradient(to bottom, #ffb899, #ff9966);
+      transform: scale(1.05);
+    }
+    
+    #ready-btn:active {
+      transform: scale(0.98);
+      box-shadow: 0 2px 4px rgba(0,0,0,0.3), inset 0 1px 1px rgba(255,255,255,0.4);
+    }
+    
+    #ready-btn:disabled {
+      background: linear-gradient(to bottom, #cccccc, #999999);
+      cursor: not-allowed;
+      transform: none;
+    }
+    
+    #ready-status {
+      color: white;
+      font-size: 20px;
+      margin-top: 25px;
+      text-shadow: 1px 1px 1px rgba(0,0,0,0.3);
+      background: rgba(0,0,0,0.2);
+      padding: 10px 20px;
+      border-radius: 20px;
+      display: inline-block;
+    }
   </style>
 </head>
 <body>
@@ -41,7 +235,7 @@
   <div id="videos" style="display: none;"></div>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r158/three.min.js"></script>
   <script src="https://unpkg.com/@daily-co/daily-js@0.58.0/dist/daily-js.min.js"></script>
-  <script src="https://unpkg.com/@mediapipe/tasks-vision@0.10.8/vision_bundle.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/vision_bundle.js"></script>
   <script src="./main.js"></script>
 </body>
 </html>
