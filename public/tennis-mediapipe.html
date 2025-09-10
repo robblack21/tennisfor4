@@ -315,8 +315,8 @@
         // Show the Daily.js iframe
         dailyContainer.style.display = 'block';
         
-        // Set the iframe source to the Daily.js room
-        dailyIframe.src = 'https://vcroom.daily.co/tennisfor4?layout=grid&showParticipantNames=true&showLeaveButton=true';
+        // Set the iframe source to the Daily.js room with muted mics
+        dailyIframe.src = 'https://vcroom.daily.co/tennisfor4?layout=grid&showParticipantNames=true&showLeaveButton=true&startAudioOff=true';
         
         updateStatus('daily-status', 'Daily: Video Connected ✅', 'good');
         console.log('✅ Joined Daily.js tennis room for video');
@@ -495,17 +495,17 @@
     }
     
     // Initialize the tennis scene
-    function init() {
+    async function init() {
       console.log('Initializing Tennis MediaPipe scene...');
       
       // Create scene
       scene = new THREE.Scene();
       scene.background = new THREE.Color(0x87CEEB);
       
-      // Create camera
+      // Create camera - zoomed in closer to court
       camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-      camera.position.set(0, 8, 12);
-      camera.lookAt(0, 0, 0);
+      camera.position.set(0, 6, 8);
+      camera.lookAt(0, 1, 0);
       
       // Create renderer
       renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -524,6 +524,9 @@
       directionalLight.shadow.mapSize.width = 2048;
       directionalLight.shadow.mapSize.height = 2048;
       scene.add(directionalLight);
+      
+      // Load 360 background first
+      await load360Background();
       
       // Create tennis court
       createTennisCourt();
@@ -569,25 +572,48 @@
       console.log('Tennis court created');
     }
     
-    // Create tennis ball
+    // Load 360 background photosphere
+    async function load360Background() {
+      try {
+        console.log('Loading 360 background...');
+        const loader = new THREE.GLTFLoader();
+        
+        const gltf = await new Promise((resolve, reject) => {
+          loader.load('assets/pyrenees 360 photosphere.glb', resolve, undefined, reject);
+        });
+        
+        const photosphere = gltf.scene;
+        photosphere.scale.set(50, 50, 50); // Large scale for 360 environment
+        scene.add(photosphere);
+        
+        console.log('✅ 360 background loaded');
+      } catch (error) {
+        console.warn('360 background failed to load, using sky color:', error);
+        // Keep the sky blue background if loading fails
+      }
+    }
+    
+    // Create tennis ball - positioned near Player 1
     function createTennisBall() {
-      const ballGeometry = new THREE.SphereGeometry(0.033);
+      const ballGeometry = new THREE.SphereGeometry(0.04); // Slightly larger ball
       const ballMaterial = new THREE.MeshLambertMaterial({ color: 0xFFFF00 });
       tennisBall = new THREE.Mesh(ballGeometry, ballMaterial);
-      tennisBall.position.set(0, 2, 3);
+      
+      // Position ball near Player 1 (index 0) for easy hitting
+      tennisBall.position.set(-2, 1.2, 3.5); // Close to player 1's position
       tennisBall.castShadow = true;
       scene.add(tennisBall);
       
-      console.log('Tennis ball created');
+      console.log('Tennis ball created near Player 1');
     }
     
-    // Create players
+    // Create players - closer positions for zoomed view
     function createPlayers() {
       const playerPositions = [
-        { x: -3, z: 4 },   // Player 1 (you)
-        { x: 3, z: 4 },    // Player 2
-        { x: -3, z: -4 },  // Player 3
-        { x: 3, z: -4 }    // Player 4
+        { x: -2.5, z: 3 },   // Player 1 (you) - closer to serve
+        { x: 2.5, z: 3 },    // Player 2
+        { x: -2.5, z: -3 },  // Player 3
+        { x: 2.5, z: -3 }    // Player 4
       ];
       
       playerPositions.forEach((pos, index) => {
@@ -917,7 +943,7 @@
       
       const distance = playerPos.distanceTo(ballPos);
       
-      if (distance < 2.0) { // Within hitting range
+      if (distance < 1.5) { // Closer hitting range for easier gameplay
         // Calculate hit direction
         const hitDirection = new THREE.Vector3()
           .subVectors(ballPos, playerPos)
