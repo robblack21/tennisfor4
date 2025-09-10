@@ -137,6 +137,7 @@ let gameState = {
   servingInTiebreak: 0   // Player serving in tiebreak (changes every 2 points)
 };
 let myId;
+let isHost = false;
 let currentPose = null;
 let audioContext = null;
 let readyStates = {};
@@ -1096,6 +1097,13 @@ async function setupDaily() {
     myId = daily.participants().local.sessionId;
     console.log('Connected with ID:', myId);
 
+    // Determine if this client is the host
+    const participants = daily.participants();
+    if (Object.keys(participants).length === 1) {
+      isHost = true;
+      console.log('This client is the host.');
+    }
+
     // Set up event listeners with better error handling
     const setupEventListener = (event, handler) => {
       try {
@@ -1183,37 +1191,14 @@ async function setupDaily() {
       console.error('Error setting local video:', error);
     }
 
-    // Add local player to lobby with video
-    console.log('Adding local player to lobby with video');
-    try {
-      // Make sure the local player is shown as the first player
-      if (gameState.players.indexOf(myId) === -1) {
-        gameState.players.unshift(myId);
-      }
-      
-      // Add to lobby with video
-      addToLobby(myId, localVideo);
-      
-      // Ensure the video is visible
-      localVideo.style.display = 'block';
-      localVideo.style.visibility = 'visible';
-      
-      // Log video element state
-      console.log('Local video element:', localVideo);
-      console.log('Local video readyState:', localVideo.readyState);
-      console.log('Local video dimensions:', localVideo.videoWidth, 'x', localVideo.videoHeight);
-      
-      // Force a play attempt if needed
-      if (localVideo.paused) {
-        try {
-          localVideo.play().catch(e => console.warn('Could not autoplay local video:', e));
-        } catch (e) {
-          console.warn('Error during play attempt:', e);
-        }
-      }
-    } catch (error) {
-      console.error('Error adding local player to lobby:', error);
+    // Add local player to the game state
+    if (isHost) {
+      addPlayer(myId);
+      broadcastGameState();
     }
+
+    // Create the local player's video element
+    createParticipantVideoElement(myId);
 
     // Pass stream to MediaPipe
     if (poseLandmarker) {
@@ -1378,64 +1363,21 @@ async function setupDaily() {
 function handleParticipantJoined(event) {
   const participant = event.participant;
   console.log('Participant joined:', participant.sessionId);
-  
-  // Check if this participant is already in our players list
-  if (gameState.players.indexOf(participant.sessionId) === -1) {
-    gameState.players.push(participant.sessionId);
-    readyStates[participant.sessionId] = false;
-    
-    // Create video element for the participant with better attributes
-    const videoElement = document.createElement('video');
-    videoElement.id = `lobby-video-${participant.sessionId}`;
-    videoElement.autoplay = true;
-    videoElement.muted = true;
-    videoElement.className = 'lobby-video';
-    videoElement.playsInline = true; // Important for iOS
-    
-    // Add debugging event listeners
-    videoElement.addEventListener('loadedmetadata', () => {
-      console.log(`Remote video loadedmetadata for ${participant.sessionId}`);
-    });
-    
-    videoElement.addEventListener('playing', () => {
-      console.log(`Remote video playing for ${participant.sessionId}`);
-    });
-    
-    videoElement.addEventListener('error', (e) => {
-      console.error(`Remote video error for ${participant.sessionId}:`, e);
-    });
-    
-    try {
-      console.log('Setting participant video:', participant.sessionId);
-      daily.setParticipantVideo(participant.sessionId, videoElement);
-      addToLobby(participant.sessionId, videoElement);
-      
-      // Force play attempt
-      setTimeout(() => {
-        if (videoElement.paused) {
-          try {
-            videoElement.play().catch(e => console.warn(`Could not autoplay video for ${participant.sessionId}:`, e));
-          } catch (e) {
-            console.warn(`Error during play attempt for ${participant.sessionId}:`, e);
-          }
-        }
-      }, 1000);
-    } catch (error) {
-      console.error('Error setting participant video:', error);
+
+  if (isHost) {
+    // Host adds the new player and broadcasts the updated state
+    if (gameState.players.indexOf(participant.sessionId) === -1) {
+      gameState.players.push(participant.sessionId);
+      readyStates[participant.sessionId] = false;
+      broadcastGameState();
     }
-    
-    // Send a hello message to notify the new participant of our presence
-    daily.sendData(JSON.stringify({
-      type: 'hello',
-      id: myId,
-      timestamp: Date.now()
-    }));
-    
-    updateLobby();
   } else {
-    console.log('Participant already in players list:', participant.sessionId);
+    // Non-host clients request the game state from the host
+    daily.sendData(JSON.stringify({ type: 'request-state', id: myId }));
   }
 
+  // All clients create the video element for the new participant
+  createParticipantVideoElement(participant.sessionId);
   if (appState === 'game') {
     // Check if we've reached the maximum players for this mode
     const playerIndex = gameState.players.indexOf(participant.sessionId);
@@ -1621,120 +1563,81 @@ function handleParticipantUpdated(event) {
 function handleParticipantLeft(event) {
   const participantId = event.participant.sessionId;
   console.log('Participant left:', participantId);
-  
-  const index = gameState.players.indexOf(participantId);
-  if (index > -1) {
-    gameState.players.splice(index, 1);
-  }
-  
-  // Remove racket
-  try {
-    scene.remove(rackets[participantId]);
-  } catch (error) {
-    // Fallback for when remove method fails
-    const index = scene.children.indexOf(rackets[participantId]);
-    if (index > -1) {
-      scene.children.splice(index, 1);
-    }
-    console.log("Using fallback scene.remove for racket");
-  }
-  delete rackets[participantId];
-  
-  // Remove character
-  try {
-    scene.remove(characters[participantId]);
-  } catch (error) {
-    // Fallback for when remove method fails
-    const index = scene.children.indexOf(characters[participantId]);
-    if (index > -1) {
-      scene.children.splice(index, 1);
-    }
-    console.log("Using fallback scene.remove for character");
-  }
-  delete characters[participantId];
 
-  // Remove video container
+  if (isHost) {
+    const index = gameState.players.indexOf(participantId);
+    if (index > -1) {
+      gameState.players.splice(index, 1);
+      delete readyStates[participantId];
+      broadcastGameState();
+    }
+  }
+
+  // All clients remove the video container and 3D objects
   const container = document.getElementById(`video-container-${participantId}`);
   if (container) {
-    console.log('Removing video container for participant:', participantId);
     container.remove();
-  } else {
-    console.log('Video container not found for participant:', participantId);
   }
-  
-  // Remove ready state
-  delete readyStates[participantId];
-
-  // Update UI
-  updateLobby();
-  updateUI();
+  if (rackets[participantId]) {
+    scene.remove(rackets[participantId]);
+    delete rackets[participantId];
+  }
+  if (characters[participantId]) {
+    scene.remove(characters[participantId]);
+    delete characters[participantId];
+  }
 }
 
 function handleData(event) {
   try {
     const data = JSON.parse(event.data);
-    console.log('Received data:', data);
-    
-    if (data.type === 'ready') {
-      readyStates[data.id] = data.ready;
-      updateLobby();
-    } else if (data.type === 'start') {
-      startGame();
-    } else if (data.type === 'hello') {
-      console.log(`Received hello from player ${data.id} at ${new Date(data.timestamp).toLocaleTimeString()}`);
-      
-      // Add this player to our list if not already there
-      if (gameState.players.indexOf(data.id) === -1) {
-        gameState.players.push(data.id);
-        
-        // Send a response hello message to confirm connection
-        if (data.id !== myId) {
-          daily.sendData(JSON.stringify({
-            type: 'hello-response',
-            id: myId,
-            timestamp: Date.now(),
-            target: data.id
-          }));
+    const fromId = event.fromId;
+
+    switch (data.type) {
+      case 'request-state':
+        if (isHost) {
+          console.log(`Received state request from ${fromId}`);
+          daily.sendData(JSON.stringify({ type: 'game-state', state: gameState }), fromId);
         }
-        
+        break;
+      case 'game-state':
+        console.log(`Received game state from host`);
+        gameState = data.state;
+        // Ensure all players have video elements
+        gameState.players.forEach(playerId => {
+          if (!document.getElementById(`video-container-${playerId}`)) {
+            createParticipantVideoElement(playerId);
+          }
+        });
         updateLobby();
-      }
-    } else if (data.type === 'hello-response') {
-      console.log(`Received hello-response from player ${data.id}`);
-      
-      // Make sure this player is in our list
-      if (gameState.players.indexOf(data.id) === -1) {
-        gameState.players.push(data.id);
+        updateUI();
+        break;
+      case 'ready':
+        readyStates[data.id] = data.ready;
+        if (isHost) {
+          broadcastGameState();
+        }
         updateLobby();
-      }
-    } else if (data.type === 'ping') {
-      // Respond to ping messages to help with connection detection
-      console.log(`Received ping from ${data.id}, sending pong`);
-      daily.sendData(JSON.stringify({
-        type: 'pong',
-        id: myId,
-        timestamp: Date.now(),
-        target: data.id
-      }));
-    } else if (data.type === 'pong') {
-      console.log(`Received pong from ${data.id}, connection confirmed`);
-    } else if (data.type === 'mode') {
-      // Update game mode
-      gameState.mode = data.mode;
-      
-      // Update UI
-      if (data.mode === 'singles') {
-        document.getElementById('singles-btn').classList.add('active');
-        document.getElementById('doubles-btn').classList.remove('active');
-      } else {
-        document.getElementById('doubles-btn').classList.add('active');
-        document.getElementById('singles-btn').classList.remove('active');
-      }
-      
-      updateLobby();
-    } else {
-      if (!inputBuffer[data.t]) inputBuffer[data.t] = {};
-      inputBuffer[data.t][data.id] = data.swing;
+        break;
+      case 'start':
+        startGame();
+        break;
+      case 'mode':
+        gameState.mode = data.mode;
+        if (isHost) {
+          broadcastGameState();
+        }
+        updateLobby();
+        break;
+      case 'swing':
+        if (!inputBuffer[data.t]) {
+          inputBuffer[data.t] = {};
+        }
+        inputBuffer[data.t][fromId] = data.swing;
+        break;
+      default:
+        // Handle other data types if necessary
+        break;
     }
   } catch (error) {
     console.error('Error handling data:', error, event.data);
@@ -2658,24 +2561,7 @@ function setupPlayersForGameMode() {
     delete characters[id];
   });
   
-  // Define positions based on game mode
-  let positions;
-  
-  if (gameState.mode === 'singles') {
-    // Singles mode - one player on each side of the net
-    positions = [
-      { x: 0, z: 3 },  // Team 1 player
-      { x: 0, z: -3 }  // Team 2 player
-    ];
-  } else {
-    // Doubles mode - two players on each side of the net
-    positions = [
-      { x: -3, z: 3 },  // Team 1 player 1
-      { x: 3, z: -3 },  // Team 2 player 1
-      { x: 3, z: 3 },   // Team 1 player 2
-      { x: -3, z: -3 }  // Team 2 player 2
-    ];
-  }
+  const positions = getPlayerPositions();
   
   // Create rackets and characters for each player
   gameState.players.forEach((playerId, index) => {
@@ -2845,3 +2731,87 @@ function loadCustomCharacterModel(url, teamIndex) {
 
 // Start the app
 init();
+
+function broadcastGameState() {
+  if (!isHost) return;
+  console.log('Broadcasting game state:', gameState);
+  daily.sendData(JSON.stringify({ type: 'game-state', state: gameState }));
+}
+
+function createParticipantVideoElement(participantId) {
+  if (document.getElementById(`video-container-${participantId}`)) {
+    return;
+  }
+  
+  function addPlayer(playerId) {
+    if (gameState.players.indexOf(playerId) === -1) {
+      gameState.players.push(playerId);
+      readyStates[playerId] = false;
+  
+      // Create racket and character for the new player
+      if (appState === 'game') {
+        const playerIndex = gameState.players.length - 1;
+        const racket = createWiiRacket();
+        const positions = getPlayerPositions();
+        if (positions[playerIndex]) {
+          racket.position.set(positions[playerIndex].x, 0.5, positions[playerIndex].z);
+        }
+        rackets[playerId] = racket;
+        scene.add(racket);
+  
+        const teamIndex = playerIndex % 2;
+        const teamKey = teamIndex === 0 ? 'team1' : 'team2';
+        const character = characterModels[teamKey].clone();
+        character.position.set(
+          racket.position.x,
+          0,
+          racket.position.z + (positions[playerIndex].z > 0 ? -0.5 : 0.5)
+        );
+        if (positions[playerIndex].z > 0) {
+          character.rotation.y = Math.PI;
+        }
+        characters[playerId] = character;
+        scene.add(character);
+      }
+    }
+  }
+  
+  function getPlayerPositions() {
+    if (gameState.mode === 'singles') {
+      return [
+        { x: 0, z: 3 },
+        { x: 0, z: -3 }
+      ];
+    } else {
+      return [
+        { x: -3, z: 3 },
+        { x: 3, z: -3 },
+        { x: 3, z: 3 },
+        { x: -3, z: -3 }
+      ];
+    }
+  }
+
+  const videoElement = document.createElement('video');
+  videoElement.id = `video-${participantId}`;
+  videoElement.autoplay = true;
+  videoElement.muted = participantId === myId;
+  videoElement.playsInline = true;
+  videoElement.className = 'lobby-video';
+
+  videoElement.addEventListener('loadedmetadata', () => {
+    console.log(`Video metadata loaded for ${participantId}`);
+  });
+  videoElement.addEventListener('playing', () => {
+    console.log(`Video is playing for ${participantId}`);
+  });
+  videoElement.addEventListener('error', (e) => {
+    console.error(`Video error for ${participantId}:`, e);
+  });
+
+  if (participantId !== myId) {
+    daily.setParticipantVideo(participantId, videoElement);
+  }
+
+  addToLobby(participantId, videoElement);
+}
