@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tennis for 4 - Simple Version</title>
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+      font-family: Arial, sans-serif;
+      background: linear-gradient(135deg, #22b14c, #00a2e8);
+    }
+    
+    .container {
+      display: flex;
+      height: 100vh;
+    }
+    
+    .game-area {
+      flex: 2;
+      position: relative;
+    }
+    
+    .video-area {
+      flex: 1;
+      background: rgba(0,0,0,0.1);
+      border-left: 3px solid white;
+    }
+    
+    .controls {
+      position: absolute;
+      top: 20px;
+      left: 20px;
+      z-index: 100;
+      background: rgba(0,0,0,0.7);
+      color: white;
+      padding: 15px;
+      border-radius: 10px;
+    }
+    
+    button {
+      background: #ff7f27;
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 5px;
+      cursor: pointer;
+      margin: 5px;
+      font-weight: bold;
+    }
+    
+    button:hover {
+      background: #ff9966;
+    }
+    
+    .score {
+      font-size: 18px;
+      margin: 10px 0;
+    }
+    
+    /* Daily iframe container */
+    .daily-container {
+      width: 100%;
+      height: 100%;
+      border: none;
+    }
+    
+    .daily-embed {
+      width: 100%;
+      height: 100%;
+      border: none;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <!-- 3D Tennis Game Area -->
+    <div class="game-area" id="game-area">
+      <div class="controls">
+        <h3>🎾 Tennis for 4</h3>
+        <div class="score">Score: <span id="score">0-0</span></div>
+        <div>Ball Speed: <span id="ball-speed">0</span></div>
+        <button onclick="resetBall()">Reset Ball</button>
+        <button onclick="hitBall()">Hit Ball</button>
+        <button onclick="startGame()">Start Game</button>
+        <button onclick="toggleCamera()">Toggle Camera</button>
+      </div>
+    </div>
+    
+    <!-- Daily Prebuilt Video Area -->
+    <div class="video-area">
+      <iframe 
+        class="daily-embed"
+        src="https://vcroom.daily.co/tennisfor4"
+        allow="camera; microphone; fullscreen; display-capture; autoplay">
+      </iframe>
+    </div>
+  </div>
+
+  <!-- Load Three.js -->
+  <script crossorigin src="https://unpkg.com/three@0.158.0/build/three.min.js"></script>
+  
+  <script>
+    // Global variables
+    let scene, camera, renderer;
+    let court, ball, rackets = {};
+    let cameraFollowBall = true;
+    let gameRunning = false;
+    let score = [0, 0];
+    
+    // Initialize the 3D scene
+    function init() {
+      console.log('Initializing 3D tennis scene...');
+      
+      // Create scene
+      scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x87CEEB); // Sky blue
+      
+      // Create camera
+      camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+      camera.position.set(0, 8, 12);
+      camera.lookAt(0, 0, 0);
+      
+      // Create renderer
+      renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setSize(window.innerWidth * 0.67, window.innerHeight); // 2/3 width for game area
+      renderer.shadowMap.enabled = true;
+      renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+      document.getElementById('game-area').appendChild(renderer.domElement);
+      
+      // Add lighting
+      const ambientLight = new THREE.AmbientLight(0x606060, 0.6);
+      scene.add(ambientLight);
+      
+      const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+      directionalLight.position.set(50, 100, 50);
+      directionalLight.castShadow = true;
+      directionalLight.shadow.mapSize.width = 2048;
+      directionalLight.shadow.mapSize.height = 2048;
+      scene.add(directionalLight);
+      
+      // Create tennis court
+      createCourt();
+      
+      // Create ball
+      createBall();
+      
+      // Create rackets
+      createRackets();
+      
+      // Create stadium
+      createStadium();
+      
+      // Start render loop
+      animate();
+      
+      console.log('✅ 3D Tennis scene initialized successfully!');
+    }
+    
+    function createCourt() {
+      // Court geometry
+      const courtGeometry = new THREE.PlaneGeometry(20, 10);
+      
+      // Create court texture
+      const canvas = document.createElement('canvas');
+      canvas.width = 1024;
+      canvas.height = 512;
+      const ctx = canvas.getContext('2d');
+      
+      // Draw court base (green)
+      ctx.fillStyle = '#4CAF50';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      
+      // Draw court lines (white)
+      ctx.strokeStyle = '#FFFFFF';
+      ctx.lineWidth = 10;
+      
+      // Outer boundary
+      ctx.strokeRect(20, 20, canvas.width - 40, canvas.height - 40);
+      
+      // Center line
+      ctx.beginPath();
+      ctx.moveTo(canvas.width / 2, 20);
+      ctx.lineTo(canvas.width / 2, canvas.height - 20);
+      ctx.stroke();
+      
+      // Service lines
+      const serviceLineOffset = canvas.width / 4;
+      ctx.beginPath();
+      ctx.moveTo(canvas.width / 2 - serviceLineOffset, 20);
+      ctx.lineTo(canvas.width / 2 - serviceLineOffset, canvas.height - 20);
+      ctx.moveTo(canvas.width / 2 + serviceLineOffset, 20);
+      ctx.lineTo(canvas.width / 2 + serviceLineOffset, canvas.height - 20);
+      ctx.stroke();
+      
+      const courtTexture = new THREE.CanvasTexture(canvas);
+      const courtMaterial = new THREE.MeshLambertMaterial({ map: courtTexture });
+      court = new THREE.Mesh(courtGeometry, courtMaterial);
+      court.rotation.x = -Math.PI / 2;
+      court.receiveShadow = true;
+      scene.add(court);
+      
+      // Create net
+      const netGeometry = new THREE.PlaneGeometry(20, 1);
+      const netMaterial = new THREE.MeshLambertMaterial({
+        color: 0xffffff,
+        transparent: true,
+        opacity: 0.8
+      });
+      const net = new THREE.Mesh(netGeometry, netMaterial);
+      net.position.set(0, 0.5, 0);
+      scene.add(net);
+    }
+    
+    function createBall() {
+      const ballGeometry = new THREE.SphereGeometry(0.1);
+      const ballMaterial = new THREE.MeshLambertMaterial({ color: 0xffff00 });
+      ball = new THREE.Mesh(ballGeometry, ballMaterial);
+      ball.position.set(0, 2, 0);
+      ball.velocity = new THREE.Vector3(0.02, 0, 0.01);
+      ball.castShadow = true;
+      scene.add(ball);
+    }
+    
+    function createRackets() {
+      // Create 4 rackets at tennis positions
+      const positions = [
+        { x: -3, z: 3 },   // Team 1 Player 1
+        { x: 3, z: 3 },    // Team 1 Player 2  
+        { x: -3, z: -3 },  // Team 2 Player 1
+        { x: 3, z: -3 }    // Team 2 Player 2
+      ];
+      
+      positions.forEach((pos, i) => {
+        const racketGroup = new THREE.Group();
+        
+        // Racket head
+        const headGeometry = new THREE.TorusGeometry(0.3, 0.03, 16, 32);
+        const headMaterial = new THREE.MeshLambertMaterial({ color: 0x333333 });
+        const head = new THREE.Mesh(headGeometry, headMaterial);
+        head.rotation.x = Math.PI / 2;
+        racketGroup.add(head);
+        
+        // Racket strings
+        const stringsGeometry = new THREE.CircleGeometry(0.28, 32);
+        const stringsMaterial = new THREE.MeshLambertMaterial({
+          color: 0xFFFFFF,
+          transparent: true,
+          opacity: 0.7
+        });
+        const strings = new THREE.Mesh(stringsGeometry, stringsMaterial);
+        strings.rotation.x = Math.PI / 2;
+        strings.position.z = 0.01;
+        racketGroup.add(strings);
+        
+        // Racket handle
+        const handleGeometry = new THREE.CylinderGeometry(0.03, 0.04, 0.5);
+        const handleMaterial = new THREE.MeshLambertMaterial({ 
+          color: i % 2 === 0 ? 0xFF5722 : 0x2196F3 
+        });
+        const handle = new THREE.Mesh(handleGeometry, handleMaterial);
+        handle.position.y = -0.4;
+        racketGroup.add(handle);
+        
+        racketGroup.position.set(pos.x, 0.5, pos.z);
+        racketGroup.castShadow = true;
+        rackets[`player${i}`] = racketGroup;
+        scene.add(racketGroup);
+      });
+    }
+    
+    function createStadium() {
+      // Stadium walls
+      const wallHeight = 3;
+      const wallColor = 0x228B22;
+      
+      // Back wall
+      const backWallGeometry = new THREE.BoxGeometry(22, wallHeight, 0.2);
+      const wallMaterial = new THREE.MeshLambertMaterial({ color: wallColor });
+      const backWall = new THREE.Mesh(backWallGeometry, wallMaterial);
+      backWall.position.set(0, wallHeight / 2, 5.1);
+      scene.add(backWall);
+      
+      // Front wall
+      const frontWall = backWall.clone();
+      frontWall.position.set(0, wallHeight / 2, -5.1);
+      scene.add(frontWall);
+      
+      // Side walls
+      const sideWallGeometry = new THREE.BoxGeometry(0.2, wallHeight, 10.2);
+      const leftWall = new THREE.Mesh(sideWallGeometry, wallMaterial);
+      leftWall.position.set(-10.1, wallHeight / 2, 0);
+      scene.add(leftWall);
+      
+      const rightWall = leftWall.clone();
+      rightWall.position.set(10.1, wallHeight / 2, 0);
+      scene.add(rightWall);
+    }
+    
+    // Animation loop
+    function animate() {
+      requestAnimationFrame(animate);
+      
+      // Update ball physics if game is running
+      if (gameRunning) {
+        updateBall();
+      }
+      
+      // Update camera
+      if (cameraFollowBall) {
+        const targetX = ball.position.x * 0.1;
+        const targetZ = ball.position.z * 0.1 + 12;
+        
+        camera.position.x += (targetX - camera.position.x) * 0.05;
+        camera.position.z += (targetZ - camera.position.z) * 0.05;
+        camera.lookAt(ball.position);
+      }
+      
+      // Update UI
+      updateUI();
+      
+      // Render
+      renderer.render(scene, camera);
+    }
+    
+    function updateBall() {
+      if (!ball || !ball.velocity) return;
+      
+      // Apply gravity
+      ball.velocity.y -= 0.0008;
+      
+      // Update position
+      ball.position.add(ball.velocity);
+      
+      // Bounce off ground
+      if (ball.position.y <= 0.1) {
+        ball.position.y = 0.1;
+        ball.velocity.y *= -0.8;
+        
+        // Check scoring
+        if (ball.position.z > 5) {
+          score[0]++;
+          updateScore();
+          resetBall();
+        } else if (ball.position.z < -5) {
+          score[1]++;
+          updateScore();
+          resetBall();
+        }
+      }
+      
+      // Bounce off court boundaries
+      if (Math.abs(ball.position.x) > 10) {
+        ball.velocity.x *= -1;
+        ball.position.x = Math.sign(ball.position.x) * 10;
+      }
+      
+      if (Math.abs(ball.position.z) > 5) {
+        ball.velocity.z *= -1;
+        ball.position.z = Math.sign(ball.position.z) * 5;
+      }
+      
+      // Simple racket collision detection
+      Object.values(rackets).forEach(racket => {
+        const distance = ball.position.distanceTo(racket.position);
+        if (distance < 0.8) {
+          // Random hit direction
+          ball.velocity.x += (Math.random() - 0.5) * 0.05;
+          ball.velocity.y += 0.03;
+          ball.velocity.z *= -1.1;
+        }
+      });
+    }
+    
+    function updateUI() {
+      if (ball && ball.velocity) {
+        const speed = Math.sqrt(
+          ball.velocity.x * ball.velocity.x + 
+          ball.velocity.y * ball.velocity.y + 
+          ball.velocity.z * ball.velocity.z
+        ).toFixed(3);
+        document.getElementById('ball-speed').textContent = speed;
+      }
+    }
+    
+    function updateScore() {
+      document.getElementById('score').textContent = `${score[0]}-${score[1]}`;
+    }
+    
+    // Control functions
+    function resetBall() {
+      ball.position.set(0, 2, 0);
+      ball.velocity.set(0.02, 0, 0.01);
+      console.log('Ball reset');
+    }
+    
+    function hitBall() {
+      ball.velocity.x += (Math.random() - 0.5) * 0.1;
+      ball.velocity.y += 0.05;
+      ball.velocity.z += (Math.random() - 0.5) * 0.1;
+      console.log('Ball hit!');
+    }
+    
+    function startGame() {
+      gameRunning = !gameRunning;
+      const button = event.target;
+      button.textContent = gameRunning ? 'Pause Game' : 'Start Game';
+      button.style.backgroundColor = gameRunning ? '#ff4444' : '#ff7f27';
+      console.log('Game running:', gameRunning);
+    }
+    
+    function toggleCamera() {
+      cameraFollowBall = !cameraFollowBall;
+      if (!cameraFollowBall) {
+        camera.position.set(0, 8, 12);
+        camera.lookAt(0, 0, 0);
+      }
+      console.log('Camera follow:', cameraFollowBall);
+    }
+    
+    // Handle window resize
+    window.addEventListener('resize', () => {
+      camera.aspect = (window.innerWidth * 0.67) / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth * 0.67, window.innerHeight);
+    });
+    
+    // Start the application
+    init();
+    
+    // Auto-start the game after 2 seconds
+    setTimeout(() => {
+      gameRunning = true;
+      console.log('Game auto-started!');
+    }, 2000);
+  </script>
+</body>
+</html>
