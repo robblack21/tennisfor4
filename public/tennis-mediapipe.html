@@ -1,0 +1,851 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tennis for 4 - MediaPipe Edition</title>
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+      font-family: 'Arial', sans-serif;
+      background: linear-gradient(135deg, #22b14c, #00a2e8);
+    }
+    
+    .ui-overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      z-index: 100;
+    }
+    
+    .game-hud {
+      position: absolute;
+      top: 20px;
+      left: 20px;
+      color: white;
+      text-shadow: 2px 2px 4px rgba(0,0,0,0.8);
+      pointer-events: auto;
+    }
+    
+    .score-display {
+      background: rgba(0,0,0,0.6);
+      padding: 15px;
+      border-radius: 10px;
+      font-size: 18px;
+      font-weight: bold;
+      margin-bottom: 10px;
+    }
+    
+    .controls-panel {
+      position: absolute;
+      top: 20px;
+      right: 20px;
+      background: rgba(0,0,0,0.8);
+      color: white;
+      padding: 20px;
+      border-radius: 10px;
+      pointer-events: auto;
+      max-width: 300px;
+    }
+    
+    .video-container {
+      width: 100%;
+      height: 150px;
+      background: #333;
+      border-radius: 5px;
+      margin: 10px 0;
+      position: relative;
+    }
+    
+    video {
+      width: 100%;
+      height: 100%;
+      border-radius: 5px;
+    }
+    
+    button {
+      background: #ff7f27;
+      color: white;
+      border: none;
+      padding: 8px 15px;
+      border-radius: 5px;
+      cursor: pointer;
+      margin: 3px;
+      font-weight: bold;
+      font-size: 12px;
+    }
+    
+    button:hover {
+      background: #ff9966;
+    }
+    
+    .status {
+      padding: 5px;
+      margin: 3px 0;
+      border-radius: 3px;
+      font-size: 12px;
+    }
+    
+    .status.good { background: rgba(0,255,0,0.2); }
+    .status.warn { background: rgba(255,255,0,0.2); }
+    .status.error { background: rgba(255,0,0,0.2); }
+    
+    .pose-data {
+      background: rgba(0,0,0,0.3);
+      padding: 8px;
+      border-radius: 5px;
+      margin: 5px 0;
+      font-size: 10px;
+    }
+    
+    .player-indicators {
+      position: absolute;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      gap: 10px;
+      pointer-events: auto;
+    }
+    
+    .player-indicator {
+      background: rgba(0,0,0,0.6);
+      color: white;
+      padding: 5px 10px;
+      border-radius: 5px;
+      font-size: 12px;
+      text-align: center;
+    }
+    
+    .player-indicator.active {
+      background: rgba(255,127,39,0.8);
+    }
+  </style>
+</head>
+<body>
+  <div class="ui-overlay">
+    <!-- Game HUD -->
+    <div class="game-hud">
+      <div class="score-display">
+        <div>Team 1: <span id="team1-score">0</span> | Team 2: <span id="team2-score">0</span></div>
+        <div>Game Status: <span id="game-status">Waiting for players</span></div>
+      </div>
+    </div>
+    
+    <!-- MediaPipe Controls -->
+    <div class="controls-panel">
+      <h3>🎾 MediaPipe Tennis</h3>
+      
+      <div style="display: flex; flex-wrap: wrap;">
+        <button onclick="startCamera()">Start Camera</button>
+        <button onclick="togglePoseTracking()">Toggle Pose</button>
+        <button onclick="resetGame()">Reset Game</button>
+        <button onclick="toggleFullscreen()">Fullscreen</button>
+      </div>
+      
+      <div class="video-container">
+        <video id="webcam" autoplay muted playsinline></video>
+      </div>
+      
+      <div id="status-container">
+        <div class="status" id="camera-status">Camera: Not started</div>
+        <div class="status" id="mediapipe-status">MediaPipe: Loading...</div>
+        <div class="status" id="game-status-detail">Game: Ready</div>
+      </div>
+      
+      <div class="pose-data">
+        <strong>Pose Data:</strong><br>
+        Swing: <span id="swing-velocity">-</span><br>
+        Ball: <span id="ball-position">-</span><br>
+        Players: <span id="player-count">1</span>
+      </div>
+    </div>
+    
+    <!-- Player Indicators -->
+    <div class="player-indicators">
+      <div class="player-indicator active">You</div>
+      <div class="player-indicator">P2</div>
+      <div class="player-indicator">P3</div>
+      <div class="player-indicator">P4</div>
+    </div>
+  </div>
+
+  <!-- Load Three.js and GLTFLoader -->
+  <script src="lib/three.min.js"></script>
+  <script src="lib/GLTFLoader.js"></script>
+  
+  <!-- Load MediaPipe -->
+  <script type="module">
+    try {
+      const vision = await import('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/vision_bundle.js');
+      window.TasksVision = vision;
+      console.log('MediaPipe loaded successfully');
+      updateStatus('mediapipe-status', 'MediaPipe: Ready ✅', 'good');
+    } catch (error) {
+      console.warn('MediaPipe not available:', error);
+      updateStatus('mediapipe-status', 'MediaPipe: Failed ❌', 'error');
+    }
+  </script>
+  
+  <script>
+    // Global variables
+    let scene, camera, renderer;
+    let tennisCourtMesh, tennisBall;
+    let players = [];
+    let poseLandmarker;
+    let webcamRunning = false;
+    let poseTrackingActive = false;
+    let currentPose = null;
+    let lastSwingTime = 0;
+    let gameState = {
+      ballPosition: { x: 0, y: 1, z: 0 },
+      ballVelocity: { x: 0, y: 0, z: 0 },
+      team1Score: 0,
+      team2Score: 0,
+      isPlaying: false
+    };
+    
+    // Update status function
+    function updateStatus(elementId, text, className) {
+      const element = document.getElementById(elementId);
+      if (element) {
+        element.textContent = text;
+        element.className = 'status ' + (className || '');
+      }
+    }
+    
+    // Initialize audio context and sounds
+    async function initializeAudio() {
+      if (audioInitialized) return;
+      
+      try {
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        
+        // Create background music (simple procedural music)
+        createBackgroundMusic();
+        
+        audioInitialized = true;
+        console.log('✅ Audio initialized');
+      } catch (error) {
+        console.error('Audio initialization failed:', error);
+      }
+    }
+    
+    // Create procedural background music
+    function createBackgroundMusic() {
+      const oscillator = audioContext.createOscillator();
+      const gainNode = audioContext.createGain();
+      
+      oscillator.connect(gainNode);
+      gainNode.connect(audioContext.destination);
+      
+      oscillator.frequency.setValueAtTime(220, audioContext.currentTime);
+      gainNode.gain.setValueAtTime(0.1, audioContext.currentTime);
+      
+      oscillator.start();
+      backgroundMusic = { oscillator, gainNode };
+    }
+    
+    // Play sound effect
+    function playSound(frequency, duration = 0.1, volume = 0.3) {
+      if (!audioContext) return;
+      
+      const oscillator = audioContext.createOscillator();
+      const gainNode = audioContext.createGain();
+      
+      oscillator.connect(gainNode);
+      gainNode.connect(audioContext.destination);
+      
+      oscillator.frequency.setValueAtTime(frequency, audioContext.currentTime);
+      gainNode.gain.setValueAtTime(volume, audioContext.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + duration);
+      
+      oscillator.start();
+      oscillator.stop(audioContext.currentTime + duration);
+    }
+    
+    // Initialize Daily.js
+    async function initializeDaily() {
+      try {
+        callObject = DailyIframe.createCallObject({
+          audioSource: false, // We're using MediaPipe, not Daily's audio
+          videoSource: false  // We're using MediaPipe camera
+        });
+        
+        // Set up event listeners
+        callObject.on('joined-meeting', handleJoinedMeeting);
+        callObject.on('participant-joined', handleParticipantJoined);
+        callObject.on('participant-left', handleParticipantLeft);
+        callObject.on('app-message', handleAppMessage);
+        callObject.on('error', handleDailyError);
+        
+        // Join the tennis room
+        await callObject.join({
+          url: 'https://vcroom.daily.co/tennisfor4'
+        });
+        
+        console.log('✅ Connected to Daily.js tennis room');
+        
+      } catch (error) {
+        console.error('Daily.js initialization failed:', error);
+        updateStatus('game-status-detail', 'Multiplayer: Failed ❌', 'error');
+      }
+    }
+    
+    // Handle joining meeting
+    function handleJoinedMeeting(event) {
+      localParticipant = event.participants.local;
+      console.log('Joined meeting as:', localParticipant.user_id);
+      
+      // Assign player ID based on join order
+      const participantCount = Object.keys(event.participants).length;
+      myPlayerId = Math.max(0, participantCount - 1);
+      
+      updateStatus('game-status-detail', `Connected as Player ${myPlayerId + 1} ✅`, 'good');
+      updatePlayerCount();
+    }
+    
+    // Handle participant joined
+    function handleParticipantJoined(event) {
+      console.log('Participant joined:', event.participant.user_id);
+      updatePlayerCount();
+    }
+    
+    // Handle participant left
+    function handleParticipantLeft(event) {
+      console.log('Participant left:', event.participant.user_id);
+      delete connectedPlayers[event.participant.user_id];
+      updatePlayerCount();
+    }
+    
+    // Handle app messages (pose data sharing)
+    function handleAppMessage(event) {
+      const { data, fromId } = event;
+      
+      if (data.type === 'pose') {
+        // Apply received pose data to the corresponding player
+        const senderId = Object.keys(connectedPlayers).indexOf(fromId);
+        if (senderId >= 0 && senderId < players.length && players[senderId]) {
+          applyPoseToPlayer(data.pose, players[senderId]);
+        }
+      } else if (data.type === 'ballHit') {
+        // Synchronize ball state across all players
+        gameState.ballVelocity = data.ballVelocity;
+        tennisBall.position.copy(data.ballPosition);
+        
+        // Play hit sound for all players
+        playSound(440, 0.2, 0.5); // Tennis hit sound
+      }
+    }
+    
+    // Handle Daily.js errors
+    function handleDailyError(event) {
+      console.error('Daily.js error:', event);
+    }
+    
+    // Send pose data to other players
+    function broadcastPoseData(pose) {
+      if (callObject && pose) {
+        callObject.sendAppMessage({
+          type: 'pose',
+          pose: pose,
+          playerId: myPlayerId
+        });
+      }
+    }
+    
+    // Send ball hit data to other players
+    function broadcastBallHit() {
+      if (callObject) {
+        callObject.sendAppMessage({
+          type: 'ballHit',
+          ballVelocity: gameState.ballVelocity,
+          ballPosition: tennisBall.position,
+          playerId: myPlayerId
+        });
+      }
+    }
+    
+    // Update player count display
+    function updatePlayerCount() {
+      if (callObject) {
+        const participants = callObject.participants();
+        const count = Object.keys(participants).length;
+        document.getElementById('player-count').textContent = count;
+        
+        // Update player indicators
+        const indicators = document.querySelectorAll('.player-indicator');
+        indicators.forEach((indicator, index) => {
+          if (index < count) {
+            indicator.style.opacity = '1';
+            if (index === myPlayerId) {
+              indicator.classList.add('active');
+            }
+          } else {
+            indicator.style.opacity = '0.3';
+          }
+        });
+      }
+    }
+    
+    // Initialize the tennis scene
+    function init() {
+      console.log('Initializing Tennis MediaPipe scene...');
+      
+      // Create scene
+      scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x87CEEB);
+      
+      // Create camera
+      camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+      camera.position.set(0, 8, 12);
+      camera.lookAt(0, 0, 0);
+      
+      // Create renderer
+      renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.shadowMap.enabled = true;
+      renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+      document.body.appendChild(renderer.domElement);
+      
+      // Add lighting
+      const ambientLight = new THREE.AmbientLight(0x606060, 0.6);
+      scene.add(ambientLight);
+      
+      const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+      directionalLight.position.set(10, 15, 5);
+      directionalLight.castShadow = true;
+      directionalLight.shadow.mapSize.width = 2048;
+      directionalLight.shadow.mapSize.height = 2048;
+      scene.add(directionalLight);
+      
+      // Create tennis court
+      createTennisCourt();
+      
+      // Create tennis ball
+      createTennisBall();
+      
+      // Create players
+      createPlayers();
+      
+      // Start render loop
+      animate();
+      
+      console.log('✅ Tennis MediaPipe scene initialized');
+    }
+    
+    // Create tennis court
+    function createTennisCourt() {
+      // Court base
+      const courtGeometry = new THREE.PlaneGeometry(23.77, 10.97);
+      const courtMaterial = new THREE.MeshLambertMaterial({ 
+        color: 0x2E8B57,
+        transparent: true,
+        opacity: 0.8
+      });
+      tennisCourtMesh = new THREE.Mesh(courtGeometry, courtMaterial);
+      tennisCourtMesh.rotation.x = -Math.PI / 2;
+      tennisCourtMesh.receiveShadow = true;
+      scene.add(tennisCourtMesh);
+      
+      // Court lines
+      const lineMaterial = new THREE.MeshBasicMaterial({ color: 0xFFFFFF });
+      const lineHeight = 0.02;
+      
+      // Net
+      const netGeometry = new THREE.BoxGeometry(12.8, 0.914, 0.1);
+      const netMaterial = new THREE.MeshLambertMaterial({ color: 0xFFFFFF });
+      const net = new THREE.Mesh(netGeometry, netMaterial);
+      net.position.set(0, 0.5, 0);
+      net.castShadow = true;
+      scene.add(net);
+      
+      console.log('Tennis court created');
+    }
+    
+    // Create tennis ball
+    function createTennisBall() {
+      const ballGeometry = new THREE.SphereGeometry(0.033);
+      const ballMaterial = new THREE.MeshLambertMaterial({ color: 0xFFFF00 });
+      tennisBall = new THREE.Mesh(ballGeometry, ballMaterial);
+      tennisBall.position.set(0, 2, 3);
+      tennisBall.castShadow = true;
+      scene.add(tennisBall);
+      
+      console.log('Tennis ball created');
+    }
+    
+    // Create players
+    function createPlayers() {
+      const playerPositions = [
+        { x: -3, z: 4 },   // Player 1 (you)
+        { x: 3, z: 4 },    // Player 2
+        { x: -3, z: -4 },  // Player 3
+        { x: 3, z: -4 }    // Player 4
+      ];
+      
+      playerPositions.forEach((pos, index) => {
+        const player = createPlayerCharacter(index);
+        player.position.set(pos.x, 0, pos.z);
+        scene.add(player);
+        players.push(player);
+      });
+      
+      console.log('Players created');
+    }
+    
+    // Create individual player character
+    function createPlayerCharacter(playerId) {
+      const characterGroup = new THREE.Group();
+      
+      // Body
+      const bodyGeometry = new THREE.CylinderGeometry(0.3, 0.3, 1.5);
+      const bodyMaterial = new THREE.MeshLambertMaterial({ 
+        color: playerId === 0 ? 0x4CAF50 : 0xFF5722 
+      });
+      const body = new THREE.Mesh(bodyGeometry, bodyMaterial);
+      body.position.y = 0.75;
+      body.castShadow = true;
+      characterGroup.add(body);
+      
+      // Head
+      const headGeometry = new THREE.SphereGeometry(0.25);
+      const headMaterial = new THREE.MeshLambertMaterial({ color: 0xFFE0BD });
+      const head = new THREE.Mesh(headGeometry, headMaterial);
+      head.position.y = 1.8;
+      head.castShadow = true;
+      characterGroup.add(head);
+      
+      // Arms for MediaPipe control
+      const rightShoulder = new THREE.Object3D();
+      rightShoulder.position.set(0.4, 1.4, 0);
+      rightShoulder.name = 'RightShoulder';
+      characterGroup.add(rightShoulder);
+      
+      const rightUpperArm = new THREE.Object3D();
+      rightUpperArm.position.set(0, -0.3, 0);
+      rightUpperArm.name = 'RightUpperArm';
+      rightShoulder.add(rightUpperArm);
+      
+      const armGeometry = new THREE.CylinderGeometry(0.08, 0.08, 0.6);
+      const armMaterial = new THREE.MeshLambertMaterial({ 
+        color: playerId === 0 ? 0x4CAF50 : 0xFF5722 
+      });
+      const rightArmMesh = new THREE.Mesh(armGeometry, armMaterial);
+      rightArmMesh.position.y = -0.3;
+      rightArmMesh.castShadow = true;
+      rightUpperArm.add(rightArmMesh);
+      
+      // Tennis racket
+      const racketHandle = new THREE.CylinderGeometry(0.02, 0.02, 0.3);
+      const racketMaterial = new THREE.MeshLambertMaterial({ color: 0x8B4513 });
+      const racket = new THREE.Mesh(racketHandle, racketMaterial);
+      racket.position.set(0, -0.7, 0);
+      racket.castShadow = true;
+      rightUpperArm.add(racket);
+      
+      // Store bone references for pose control
+      const bones = {
+        'RightShoulder': rightShoulder,
+        'RightUpperArm': rightUpperArm,
+        'rightArm': rightUpperArm,
+        'racket': racket
+      };
+      
+      characterGroup.userData = { 
+        bones: bones, 
+        playerId: playerId,
+        lastSwingTime: 0
+      };
+      
+      return characterGroup;
+    }
+    
+    // Set up MediaPipe pose tracking
+    async function setupMediaPipe() {
+      try {
+        if (!window.TasksVision) {
+          throw new Error('TasksVision not available');
+        }
+        
+        const { FilesetResolver, PoseLandmarker } = window.TasksVision;
+        
+        const vision = await FilesetResolver.forVisionTasks(
+          "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/wasm"
+        );
+        
+        poseLandmarker = await PoseLandmarker.createFromOptions(vision, {
+          baseOptions: {
+            modelAssetPath: "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task",
+            delegate: "GPU"
+          },
+          runningMode: "VIDEO",
+          numPoses: 1
+        });
+        
+        updateStatus('mediapipe-status', 'MediaPipe: Ready ✅', 'good');
+        console.log('✅ MediaPipe pose landmarker ready');
+        
+      } catch (error) {
+        console.error('Error setting up MediaPipe:', error);
+        updateStatus('mediapipe-status', 'MediaPipe: Error ❌', 'error');
+      }
+    }
+    
+    // Start camera
+    async function startCamera() {
+      try {
+        // Initialize audio on first user interaction
+        await initializeAudio();
+        
+        const video = document.getElementById('webcam');
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { width: 320, height: 240 }
+        });
+        
+        video.srcObject = stream;
+        video.onloadedmetadata = () => {
+          webcamRunning = true;
+          updateStatus('camera-status', 'Camera: Running ✅', 'good');
+          console.log('✅ Camera started');
+          
+          // Auto-start pose tracking
+          if (!poseTrackingActive) {
+            togglePoseTracking();
+          }
+          
+          // Initialize Daily.js if not already connected
+          if (!callObject) {
+            initializeDaily();
+          }
+        };
+        
+      } catch (error) {
+        console.error('Error starting camera:', error);
+        updateStatus('camera-status', 'Camera: Error ❌', 'error');
+      }
+    }
+    
+    // Toggle pose tracking
+    function togglePoseTracking() {
+      poseTrackingActive = !poseTrackingActive;
+      
+      if (poseTrackingActive && webcamRunning && poseLandmarker) {
+        startPoseDetection();
+        updateStatus('game-status-detail', 'Pose: Tracking ✅', 'good');
+      } else {
+        updateStatus('game-status-detail', 'Pose: Stopped ⏸️', 'warn');
+      }
+      
+      console.log('Pose tracking:', poseTrackingActive);
+    }
+    
+    // Start pose detection loop
+    function startPoseDetection() {
+      const video = document.getElementById('webcam');
+      
+      const detectPose = async () => {
+        if (!poseTrackingActive || !webcamRunning || !poseLandmarker) return;
+        
+        try {
+          if (video.readyState >= 2) {
+            const result = await poseLandmarker.detectForVideo(video, performance.now());
+            
+            if (result.landmarks && result.landmarks.length > 0) {
+              currentPose = result.landmarks[0];
+              
+              // Apply pose to my player character
+              if (players[myPlayerId]) {
+                applyPoseToPlayer(currentPose, players[myPlayerId]);
+              }
+              
+              // Broadcast pose data to other players
+              broadcastPoseData(currentPose);
+              
+              // Update UI
+              updatePoseDisplay(currentPose);
+            }
+          }
+        } catch (error) {
+          console.error('Error detecting pose:', error);
+        }
+        
+        if (poseTrackingActive) {
+          requestAnimationFrame(detectPose);
+        }
+      };
+      
+      detectPose();
+    }
+    
+    // Apply MediaPipe pose to player character
+    function applyPoseToPlayer(pose, player) {
+      if (!pose || !player) return;
+      
+      const wrist = pose[16]; // Right wrist
+      const elbow = pose[14]; // Right elbow
+      const shoulder = pose[12]; // Right shoulder
+      
+      if (!wrist || !elbow || !shoulder) return;
+      
+      const bones = player.userData.bones;
+      if (!bones) return;
+      
+      // Calculate swing motion
+      const swingVelocity = Math.sqrt(
+        Math.pow(wrist.x - shoulder.x, 2) + 
+        Math.pow(wrist.y - shoulder.y, 2)
+      );
+      
+      // Apply arm rotation
+      if (bones.rightArm) {
+        const armAngleX = (wrist.y - shoulder.y) * 3;
+        const armAngleZ = (wrist.x - shoulder.x) * 3;
+        
+        bones.rightArm.rotation.x = armAngleX;
+        bones.rightArm.rotation.z = armAngleZ;
+      }
+      
+      // Detect tennis swing
+      if (swingVelocity > 0.3 && Date.now() - player.userData.lastSwingTime > 800) {
+        console.log('🎾 Tennis swing detected!', { velocity: swingVelocity });
+        player.userData.lastSwingTime = Date.now();
+        
+        // Play swing sound
+        playSound(200, 0.1, 0.3);
+        
+        // Trigger ball hit if ball is nearby
+        hitBallIfNearby(player, swingVelocity);
+      }
+    }
+    
+    // Hit ball if player is close enough
+    function hitBallIfNearby(player, swingPower) {
+      const playerPos = player.position;
+      const ballPos = tennisBall.position;
+      
+      const distance = playerPos.distanceTo(ballPos);
+      
+      if (distance < 2.0) { // Within hitting range
+        // Calculate hit direction
+        const hitDirection = new THREE.Vector3()
+          .subVectors(ballPos, playerPos)
+          .normalize();
+        
+        // Apply velocity based on swing power
+        gameState.ballVelocity.x = hitDirection.x * swingPower * 8;
+        gameState.ballVelocity.y = 3 + swingPower * 2;
+        gameState.ballVelocity.z = hitDirection.z * swingPower * 8;
+        
+        console.log('🎾 Ball hit!', gameState.ballVelocity);
+      }
+    }
+    
+    // Update pose display
+    function updatePoseDisplay(pose) {
+      const wrist = pose[16];
+      const velocity = wrist ? Math.sqrt(wrist.x * wrist.x + wrist.y * wrist.y) : 0;
+      
+      document.getElementById('swing-velocity').textContent = velocity.toFixed(3);
+      document.getElementById('ball-position').textContent = 
+        `${tennisBall.position.x.toFixed(1)}, ${tennisBall.position.y.toFixed(1)}, ${tennisBall.position.z.toFixed(1)}`;
+    }
+    
+    // Update ball physics
+    function updateBallPhysics() {
+      const dt = 0.016; // 60fps
+      
+      // Apply gravity
+      gameState.ballVelocity.y -= 9.8 * dt;
+      
+      // Update position
+      tennisBall.position.x += gameState.ballVelocity.x * dt;
+      tennisBall.position.y += gameState.ballVelocity.y * dt;
+      tennisBall.position.z += gameState.ballVelocity.z * dt;
+      
+      // Ground bounce
+      if (tennisBall.position.y <= 0.033) {
+        tennisBall.position.y = 0.033;
+        gameState.ballVelocity.y = Math.abs(gameState.ballVelocity.y) * 0.7;
+        gameState.ballVelocity.x *= 0.8;
+        gameState.ballVelocity.z *= 0.8;
+      }
+      
+      // Court bounds
+      if (Math.abs(tennisBall.position.x) > 12) {
+        gameState.ballVelocity.x *= -0.8;
+        tennisBall.position.x = Math.sign(tennisBall.position.x) * 11.5;
+      }
+      
+      if (Math.abs(tennisBall.position.z) > 6) {
+        gameState.ballVelocity.z *= -0.8;
+        tennisBall.position.z = Math.sign(tennisBall.position.z) * 5.5;
+      }
+      
+      // Reset ball if it goes too high or low
+      if (tennisBall.position.y > 20 || tennisBall.position.y < -5) {
+        resetBall();
+      }
+    }
+    
+    // Reset ball position
+    function resetBall() {
+      tennisBall.position.set(0, 2, 0);
+      gameState.ballVelocity = { x: 0, y: 0, z: 0 };
+    }
+    
+    // Reset game
+    function resetGame() {
+      resetBall();
+      gameState.team1Score = 0;
+      gameState.team2Score = 0;
+      document.getElementById('team1-score').textContent = '0';
+      document.getElementById('team2-score').textContent = '0';
+      document.getElementById('game-status').textContent = 'Game Reset';
+    }
+    
+    // Toggle fullscreen
+    function toggleFullscreen() {
+      if (!document.fullscreenElement) {
+        document.documentElement.requestFullscreen();
+      } else {
+        document.exitFullscreen();
+      }
+    }
+    
+    // Animation loop
+    function animate() {
+      requestAnimationFrame(animate);
+      
+      // Update ball physics
+      updateBallPhysics();
+      
+      // Update camera to follow ball
+      const ballPos = tennisBall.position;
+      camera.lookAt(ballPos.x, ballPos.y + 2, ballPos.z);
+      
+      // Render
+      renderer.render(scene, camera);
+    }
+    
+    // Handle window resize
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+    
+    // Initialize everything
+    init();
+    
+    // Auto-setup MediaPipe when script loads
+    setTimeout(async () => {
+      await setupMediaPipe();
+    }, 1000);
+  </script>
+</body>
+</html>
