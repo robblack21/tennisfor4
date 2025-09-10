@@ -15,7 +15,7 @@ This project creates a faithful modern replica of Wii Sports Tennis adapted for 
 - ✅ **Three.js 3D Scene** - Court, ball, rackets, dynamic camera following ball
 - ✅ **Physics Engine** - Ball movement, gravity, collisions, racket interactions
 - ✅ **Multiplayer Sync** - Lockstep simulation for deterministic gameplay
-- ✅ **Game Logic** - Scoring, serving rotation, doubles mode
+- ✅ **Game Logic** - Scoring, serving rotation, singles (1v1) and doubles (2v2) modes
 - ✅ **UI Framework** - Wii-themed styling with gradients, rounded elements
 - ✅ **Audio Feedback** - Sound effects for bounces and swings
 - ✅ **MediaPipe Integration** - Pose tracking for swing detection (with fallback)
@@ -51,6 +51,7 @@ This project creates a faithful modern replica of Wii Sports Tennis adapted for 
 - **Pose Detection:** May require camera permissions and good lighting
 - **Browser Compatibility:** Requires modern browser with WebRTC support
 - **Performance:** 60Hz simulation may need optimization for lower-end devices
+- **Daily.js Connection:** Occasional issues with video feed display and player synchronization
 
 ## TODOs for Visual & UX Improvements 🎨
 
@@ -65,7 +66,7 @@ This project creates a faithful modern replica of Wii Sports Tennis adapted for 
   - Create authentic Wii Sports menu styling
   - Add player selection screens with Mii-like avatars
   - Implement Wii Sports scoring display animations
-  - Add game mode selection (Singles/Doubles/Tournament)
+  - ✅ Add game mode selection (Singles/Doubles/Tournament)
 
 - [ ] **Visual Effects**
   - Add court texture and lighting to match Wii Sports
@@ -132,7 +133,8 @@ npm run dev  # Runs on http://localhost:8080
 1. Review current implementation at https://localhost:8080
 2. Focus on visual authenticity using Wii Sports reference images in assets/
 3. Enhance UI/UX with Wii Sports branding and animations
-4. Test multiplayer functionality with 4+ players
-5. Optimize performance and add polish features
+4. Test multiplayer functionality with both singles (1v1) and doubles (2v2) modes
+5. Fix remaining Daily.js connection issues and player feed display
+6. Optimize performance and add polish features
 
-The core multiplayer tennis gameplay is functional - focus efforts on making it look and feel like authentic Wii Sports!
+The core multiplayer tennis gameplay is functional with support for both singles and doubles modes - focus efforts on making it look and feel like authentic Wii Sports!

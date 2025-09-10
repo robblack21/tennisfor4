@@ -244,6 +244,51 @@
       border-radius: 20px;
       display: inline-block;
     }
+    
+    /* Game mode selector */
+    .game-mode-selector {
+      margin: 20px 0;
+      padding: 15px;
+      background: rgba(255,255,255,0.2);
+      border-radius: 20px;
+      border: 2px solid white;
+    }
+    
+    .game-mode-selector h3 {
+      margin: 0 0 15px 0;
+      color: white;
+      font-size: 24px;
+      text-shadow: 1px 1px 1px rgba(0,0,0,0.3);
+    }
+    
+    .mode-buttons {
+      display: flex;
+      justify-content: center;
+      gap: 20px;
+    }
+    
+    .mode-btn {
+      background: linear-gradient(to bottom, #cccccc, #999999);
+      color: white;
+      border: 2px solid white;
+      padding: 10px 20px;
+      border-radius: 20px;
+      font-size: 18px;
+      font-weight: bold;
+      cursor: pointer;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+      transition: all 0.2s;
+    }
+    
+    .mode-btn:hover {
+      transform: scale(1.05);
+    }
+    
+    .mode-btn.active {
+      background: linear-gradient(to bottom, #ff9966, var(--wii-orange));
+      transform: scale(1.05);
+      box-shadow: 0 4px 8px rgba(0,0,0,0.3);
+    }
   </style>
 </head>
 <body>

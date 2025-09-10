@@ -124,7 +124,7 @@ let gameState = {
   currentSet: 0,         // Current set (0-2 for three sets)
   serving: 0,            // Index of serving player
   players: [],           // Player IDs
-  mode: 'doubles',       // Game mode (always doubles)
+  mode: 'doubles',       // Game mode: 'singles' (1v1) or 'doubles' (2v2)
   gamePoint: false,      // Is this game point?
   setPoint: false,       // Is this set point?
   matchPoint: false,     // Is this match point?
@@ -536,6 +536,23 @@ function setupThreeJS() {
   ctx.lineTo(canvas.width / 2 + serviceLineOffset, canvas.height - 20);
   ctx.stroke();
   
+  // Singles court lines (narrower)
+  ctx.strokeStyle = '#FFFFFF';
+  ctx.lineWidth = 5; // Thinner lines for singles
+  ctx.setLineDash([10, 10]); // Dashed lines for singles
+  
+  // Singles sidelines (at 1/4 width from center)
+  const singlesLineOffset = canvas.width / 4;
+  ctx.beginPath();
+  ctx.moveTo(canvas.width / 2 - singlesLineOffset, 20);
+  ctx.lineTo(canvas.width / 2 - singlesLineOffset, canvas.height - 20);
+  ctx.moveTo(canvas.width / 2 + singlesLineOffset, 20);
+  ctx.lineTo(canvas.width / 2 + singlesLineOffset, canvas.height - 20);
+  ctx.stroke();
+  
+  // Reset line style
+  ctx.setLineDash([]);
+  
   // Create texture from canvas
   const courtTexture = new THREE.CanvasTexture(canvas);
   courtTexture.wrapS = THREE.RepeatWrapping;
@@ -945,11 +962,31 @@ async function setupDaily() {
       // First request camera permissions explicitly
       try {
         console.log('Requesting camera permissions...');
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { width: 640, height: 480 },
-          audio: true
-        });
-        console.log('Camera permissions granted, stream:', stream);
+        // Add retry mechanism for camera permissions
+        let retryCount = 0;
+        const maxRetries = 3;
+        let stream;
+        
+        while (!stream && retryCount < maxRetries) {
+          try {
+            console.log(`Camera permission attempt ${retryCount + 1}...`);
+            stream = await navigator.mediaDevices.getUserMedia({
+              video: { width: 640, height: 480 },
+              audio: true
+            });
+            console.log('Camera permissions granted, stream:', stream);
+          } catch (err) {
+            console.warn(`Camera permission error (attempt ${retryCount + 1}):`, err);
+            retryCount++;
+            
+            if (retryCount < maxRetries) {
+              console.log(`Retrying camera permissions in 1 second...`);
+              await new Promise(resolve => setTimeout(resolve, 1000));
+            } else {
+              throw new Error('Failed to get camera permissions after multiple attempts');
+            }
+          }
+        }
         
         // Create a video element to display the stream immediately
         const previewVideo = document.createElement('video');
@@ -964,12 +1001,23 @@ async function setupDaily() {
         previewVideo.style.borderRadius = '10px';
         previewVideo.style.zIndex = '1000';
         previewVideo.style.border = '2px solid white';
+        previewVideo.id = 'preview-video';
         document.body.appendChild(previewVideo);
         
         // Create Daily call object with the stream
         daily = Daily.createCallObject({
           audioSource: stream.getAudioTracks()[0],
-          videoSource: stream.getVideoTracks()[0]
+          videoSource: stream.getVideoTracks()[0],
+          dailyConfig: {
+            experimentalChromeVideoMuteLightOff: true,
+            // Add better video encoding settings for improved reliability
+            camSimulcastEncodings: [
+              { maxBitrate: 600000, maxFramerate: 30 },
+              { maxBitrate: 300000, maxFramerate: 15 }
+            ],
+            // Improve connection reliability
+            experimentalWebAudioMix: true
+          }
         });
       } catch (err) {
         console.warn('Camera permission error:', err);
@@ -980,10 +1028,39 @@ async function setupDaily() {
       // Join the Daily room
       console.log('Joining Daily room:', ROOM_URL);
       try {
-        await daily.join({
-          url: ROOM_URL,
-          userName: 'Player-' + Math.floor(Math.random() * 1000)
-        });
+        // Add retry mechanism for joining the Daily room
+        let joinRetryCount = 0;
+        const maxJoinRetries = 3;
+        let joinSuccess = false;
+        
+        while (!joinSuccess && joinRetryCount < maxJoinRetries) {
+          try {
+            await daily.join({
+              url: ROOM_URL,
+              userName: 'Player-' + Math.floor(Math.random() * 1000),
+              showLocalVideo: true,
+              showParticipantsBar: false,
+              // Add additional options for better connection
+              audioProcessing: {
+                echoCancellation: true,
+                noiseSuppression: true,
+                autoGainControl: true
+              }
+            });
+            joinSuccess = true;
+            console.log('Joined Daily room successfully');
+          } catch (err) {
+            console.error(`Error joining Daily room (attempt ${joinRetryCount + 1}):`, err);
+            joinRetryCount++;
+            
+            if (joinRetryCount < maxJoinRetries) {
+              console.log(`Retrying Daily room join in 2 seconds...`);
+              await new Promise(resolve => setTimeout(resolve, 2000));
+            } else {
+              throw new Error('Failed to join Daily room after multiple attempts');
+            }
+          }
+        }
         console.log('Joined Daily room successfully');
         
         // Check if we have participants and log them
@@ -996,34 +1073,143 @@ async function setupDaily() {
           id: daily.participants().local.sessionId,
           timestamp: Date.now()
         }));
+        
+        // Log all participants to help with debugging
+        Object.keys(participants).forEach(key => {
+          if (key !== 'local') {
+            console.log(`Found remote participant: ${key}`, participants[key]);
+            // Send a hello message to each participant
+            daily.sendData(JSON.stringify({
+              type: 'hello',
+              id: daily.participants().local.sessionId,
+              timestamp: Date.now(),
+              target: key
+            }));
+          }
+        });
       } catch (err) {
         console.error('Error joining Daily room:', err);
+        alert('Error joining Daily room: ' + err.message);
       }
     }
     
     myId = daily.participants().local.sessionId;
     console.log('Connected with ID:', myId);
 
-    daily.on('participant-joined', handleParticipantJoined);
-    daily.on('participant-left', handleParticipantLeft);
-    daily.on('participant-updated', handleParticipantUpdated);
-    daily.on('data', handleData);
+    // Set up event listeners with better error handling
+    const setupEventListener = (event, handler) => {
+      try {
+        daily.on(event, handler);
+        console.log(`Successfully registered handler for ${event} event`);
+      } catch (error) {
+        console.error(`Error setting up ${event} event listener:`, error);
+      }
+    };
+
+    setupEventListener('participant-joined', handleParticipantJoined);
+    setupEventListener('participant-left', handleParticipantLeft);
+    setupEventListener('participant-updated', handleParticipantUpdated);
+    setupEventListener('data', handleData);
+    setupEventListener('joined-meeting', (event) => {
+      console.log('Joined meeting event:', event);
+    });
+    setupEventListener('error', (error) => {
+      console.error('Daily error:', error);
+      // Don't show alert for every error, just log it
+      if (error.errorMsg && error.errorMsg.includes('network')) {
+        console.warn('Network error detected, attempting to reconnect...');
+        // Attempt to reconnect after a short delay
+        setTimeout(() => {
+          try {
+            daily.leave().then(() => {
+              daily.join({ url: ROOM_URL });
+            });
+          } catch (e) {
+            console.error('Error during reconnection attempt:', e);
+          }
+        }, 3000);
+      }
+    });
+    
+    // Add network quality monitoring
+    setupEventListener('network-quality-change', (event) => {
+      console.log('Network quality changed:', event);
+      if (event.threshold === 'low') {
+        console.warn('Network quality is low, reducing video quality');
+        try {
+          daily.updateInputSettings({
+            video: {
+              quality: 'low',
+              encodings: {
+                maxBitrate: 150000,
+                maxFramerate: 15
+              }
+            }
+          });
+        } catch (e) {
+          console.error('Error updating video quality:', e);
+        }
+      }
+    });
 
     // Start camera and get stream for MediaPipe
     await daily.startCamera();
+    // Create and set up local video element with better debugging
     const localVideo = document.createElement('video');
     localVideo.autoplay = true;
     localVideo.muted = true;
-    daily.setLocalVideo(localVideo);
+    localVideo.id = 'local-video';
+    localVideo.className = 'lobby-video';
+    localVideo.playsInline = true; // Important for iOS
+    
+    // Add event listeners to debug video issues
+    localVideo.addEventListener('loadedmetadata', () => {
+      console.log('Local video loadedmetadata event fired');
+      console.log('Video dimensions:', localVideo.videoWidth, 'x', localVideo.videoHeight);
+    });
+    
+    localVideo.addEventListener('playing', () => {
+      console.log('Local video playing event fired');
+    });
+    
+    localVideo.addEventListener('error', (e) => {
+      console.error('Local video error:', e);
+    });
+    
+    try {
+      daily.setLocalVideo(localVideo);
+      console.log('Local video set successfully');
+    } catch (error) {
+      console.error('Error setting local video:', error);
+    }
 
     // Add local player to lobby with video
     console.log('Adding local player to lobby with video');
     try {
-      addToLobby(myId, localVideo);
-      
       // Make sure the local player is shown as the first player
       if (gameState.players.indexOf(myId) === -1) {
         gameState.players.unshift(myId);
+      }
+      
+      // Add to lobby with video
+      addToLobby(myId, localVideo);
+      
+      // Ensure the video is visible
+      localVideo.style.display = 'block';
+      localVideo.style.visibility = 'visible';
+      
+      // Log video element state
+      console.log('Local video element:', localVideo);
+      console.log('Local video readyState:', localVideo.readyState);
+      console.log('Local video dimensions:', localVideo.videoWidth, 'x', localVideo.videoHeight);
+      
+      // Force a play attempt if needed
+      if (localVideo.paused) {
+        try {
+          localVideo.play().catch(e => console.warn('Could not autoplay local video:', e));
+        } catch (e) {
+          console.warn('Error during play attempt:', e);
+        }
       }
     } catch (error) {
       console.error('Error adding local player to lobby:', error);
@@ -1036,7 +1222,9 @@ async function setupDaily() {
         try {
           if (localVideo.readyState >= 2) {
             const result = await poseLandmarker.detectForVideo(localVideo, Date.now());
-            currentPose = result.landmarks[0]; // Assuming one pose
+            if (result.landmarks && result.landmarks.length > 0) {
+              currentPose = result.landmarks[0]; // Assuming one pose
+            }
           }
         } catch (error) {
           console.error('Error detecting pose:', error);
@@ -1050,6 +1238,38 @@ async function setupDaily() {
     document.getElementById('ready-btn').addEventListener('click', () => {
       readyStates[myId] = true;
       daily.sendData(JSON.stringify({ type: 'ready', id: myId, ready: true }));
+      updateLobby();
+    });
+    
+    // Add game mode selector
+    const gameModeSelector = document.createElement('div');
+    gameModeSelector.id = 'game-mode-selector';
+    gameModeSelector.className = 'game-mode-selector';
+    gameModeSelector.innerHTML = `
+      <h3>Game Mode</h3>
+      <div class="mode-buttons">
+        <button id="singles-btn" class="mode-btn">Singles (1v1)</button>
+        <button id="doubles-btn" class="mode-btn active">Doubles (2v2)</button>
+      </div>
+    `;
+    
+    const lobby = document.getElementById('lobby');
+    lobby.insertBefore(gameModeSelector, document.getElementById('ready-btn'));
+    
+    // Add event listeners for game mode buttons
+    document.getElementById('singles-btn').addEventListener('click', () => {
+      gameState.mode = 'singles';
+      document.getElementById('singles-btn').classList.add('active');
+      document.getElementById('doubles-btn').classList.remove('active');
+      daily.sendData(JSON.stringify({ type: 'mode', mode: 'singles' }));
+      updateLobby();
+    });
+    
+    document.getElementById('doubles-btn').addEventListener('click', () => {
+      gameState.mode = 'doubles';
+      document.getElementById('doubles-btn').classList.add('active');
+      document.getElementById('singles-btn').classList.remove('active');
+      daily.sendData(JSON.stringify({ type: 'mode', mode: 'doubles' }));
       updateLobby();
     });
     
@@ -1073,6 +1293,8 @@ async function setupDaily() {
     
   } catch (error) {
     console.error('Error setting up Daily:', error);
+    alert('Error setting up Daily: ' + error.message);
+    
     // Create a fallback implementation
     daily = {
       join: async function() { return Promise.resolve(); },
@@ -1103,6 +1325,7 @@ async function setupDaily() {
     
     // Add to lobby
     const dummyVideo = document.createElement('video');
+    dummyVideo.id = 'local-video-fallback';
     addToLobby(myId, dummyVideo);
     
     // Ready button
@@ -1126,6 +1349,29 @@ async function setupDaily() {
         }, 2000 * i);
       }, 1000 * i);
     }
+    
+    // Set up periodic connection check
+    setInterval(() => {
+      if (daily && typeof daily.participants === 'function') {
+        try {
+          const participants = daily.participants();
+          const participantCount = Object.keys(participants).length;
+          console.log(`Connection check: ${participantCount} participants connected`);
+          
+          // If we're in the lobby and have lost connection, try to reconnect
+          if (appState === 'lobby' && participantCount <= 1 && typeof Daily !== 'undefined') {
+            console.log('Few participants detected, checking connection...');
+            daily.sendData(JSON.stringify({
+              type: 'ping',
+              id: myId,
+              timestamp: Date.now()
+            }));
+          }
+        } catch (e) {
+          console.error('Error during connection check:', e);
+        }
+      }
+    }, 30000); // Check every 30 seconds
   }
 }
 
@@ -1138,17 +1384,42 @@ function handleParticipantJoined(event) {
     gameState.players.push(participant.sessionId);
     readyStates[participant.sessionId] = false;
     
-    // Create video element for the participant
+    // Create video element for the participant with better attributes
     const videoElement = document.createElement('video');
     videoElement.id = `lobby-video-${participant.sessionId}`;
     videoElement.autoplay = true;
     videoElement.muted = true;
     videoElement.className = 'lobby-video';
+    videoElement.playsInline = true; // Important for iOS
+    
+    // Add debugging event listeners
+    videoElement.addEventListener('loadedmetadata', () => {
+      console.log(`Remote video loadedmetadata for ${participant.sessionId}`);
+    });
+    
+    videoElement.addEventListener('playing', () => {
+      console.log(`Remote video playing for ${participant.sessionId}`);
+    });
+    
+    videoElement.addEventListener('error', (e) => {
+      console.error(`Remote video error for ${participant.sessionId}:`, e);
+    });
     
     try {
       console.log('Setting participant video:', participant.sessionId);
       daily.setParticipantVideo(participant.sessionId, videoElement);
       addToLobby(participant.sessionId, videoElement);
+      
+      // Force play attempt
+      setTimeout(() => {
+        if (videoElement.paused) {
+          try {
+            videoElement.play().catch(e => console.warn(`Could not autoplay video for ${participant.sessionId}:`, e));
+          } catch (e) {
+            console.warn(`Error during play attempt for ${participant.sessionId}:`, e);
+          }
+        }
+      }, 1000);
     } catch (error) {
       console.error('Error setting participant video:', error);
     }
@@ -1166,17 +1437,36 @@ function handleParticipantJoined(event) {
   }
 
   if (appState === 'game') {
+    // Check if we've reached the maximum players for this mode
+    const playerIndex = gameState.players.indexOf(participant.sessionId);
+    if ((gameState.mode === 'singles' && playerIndex >= 2) ||
+        (gameState.mode === 'doubles' && playerIndex >= 4)) {
+      console.log(`Player ${participant.sessionId} joined but not added to game (max players reached for ${gameState.mode} mode)`);
+      return;
+    }
+    
     // Create Wii-style racket for new player
     const racket = createWiiRacket();
     
-    // Position racket based on player index
-    const playerIndex = gameState.players.length - 1;
-    const positions = [
-      { x: -8, z: 3 }, // Top-left
-      { x: 8, z: 3 },  // Top-right
-      { x: -8, z: -3 }, // Bottom-left
-      { x: 8, z: -3 }  // Bottom-right
-    ];
+    // Position racket based on game mode and player index
+    let positions;
+    
+    if (gameState.mode === 'singles') {
+      // Singles mode - one player on each side of the net
+      positions = [
+        { x: 0, z: 3 },  // Team 1 player
+        { x: 0, z: -3 }  // Team 2 player
+      ];
+    } else {
+      // Doubles mode - two players on each side of the net
+      positions = [
+        { x: -3, z: 3 },  // Team 1 player 1
+        { x: 3, z: -3 },  // Team 2 player 1
+        { x: 3, z: 3 },   // Team 1 player 2
+        { x: -3, z: -3 }  // Team 2 player 2
+      ];
+    }
+    
     if (positions[playerIndex]) {
       racket.position.set(positions[playerIndex].x, 0.5, positions[playerIndex].z);
     }
@@ -1203,6 +1493,8 @@ function handleParticipantJoined(event) {
     
     characters[participant.sessionId] = character;
     scene.add(character);
+    
+    console.log(`Added player ${participant.sessionId} to game in ${gameState.mode} mode at position:`, positions[playerIndex]);
   }
 }
 
@@ -1379,22 +1671,73 @@ function handleParticipantLeft(event) {
 }
 
 function handleData(event) {
-  const data = JSON.parse(event.data);
-  if (data.type === 'ready') {
-    readyStates[data.id] = data.ready;
-    updateLobby();
-  } else if (data.type === 'start') {
-    startGame();
-  } else if (data.type === 'hello') {
-    console.log(`Received hello from player ${data.id} at ${new Date(data.timestamp).toLocaleTimeString()}`);
-    // Add this player to our list if not already there
-    if (gameState.players.indexOf(data.id) === -1) {
-      gameState.players.push(data.id);
+  try {
+    const data = JSON.parse(event.data);
+    console.log('Received data:', data);
+    
+    if (data.type === 'ready') {
+      readyStates[data.id] = data.ready;
       updateLobby();
+    } else if (data.type === 'start') {
+      startGame();
+    } else if (data.type === 'hello') {
+      console.log(`Received hello from player ${data.id} at ${new Date(data.timestamp).toLocaleTimeString()}`);
+      
+      // Add this player to our list if not already there
+      if (gameState.players.indexOf(data.id) === -1) {
+        gameState.players.push(data.id);
+        
+        // Send a response hello message to confirm connection
+        if (data.id !== myId) {
+          daily.sendData(JSON.stringify({
+            type: 'hello-response',
+            id: myId,
+            timestamp: Date.now(),
+            target: data.id
+          }));
+        }
+        
+        updateLobby();
+      }
+    } else if (data.type === 'hello-response') {
+      console.log(`Received hello-response from player ${data.id}`);
+      
+      // Make sure this player is in our list
+      if (gameState.players.indexOf(data.id) === -1) {
+        gameState.players.push(data.id);
+        updateLobby();
+      }
+    } else if (data.type === 'ping') {
+      // Respond to ping messages to help with connection detection
+      console.log(`Received ping from ${data.id}, sending pong`);
+      daily.sendData(JSON.stringify({
+        type: 'pong',
+        id: myId,
+        timestamp: Date.now(),
+        target: data.id
+      }));
+    } else if (data.type === 'pong') {
+      console.log(`Received pong from ${data.id}, connection confirmed`);
+    } else if (data.type === 'mode') {
+      // Update game mode
+      gameState.mode = data.mode;
+      
+      // Update UI
+      if (data.mode === 'singles') {
+        document.getElementById('singles-btn').classList.add('active');
+        document.getElementById('doubles-btn').classList.remove('active');
+      } else {
+        document.getElementById('doubles-btn').classList.add('active');
+        document.getElementById('singles-btn').classList.remove('active');
+      }
+      
+      updateLobby();
+    } else {
+      if (!inputBuffer[data.t]) inputBuffer[data.t] = {};
+      inputBuffer[data.t][data.id] = data.swing;
     }
-  } else {
-    if (!inputBuffer[data.t]) inputBuffer[data.t] = {};
-    inputBuffer[data.t][data.id] = data.swing;
+  } catch (error) {
+    console.error('Error handling data:', error, event.data);
   }
 }
 
@@ -1485,15 +1828,16 @@ function simulateFrame(inputs) {
     playSound(200, 0.1); // Bounce sound
   }
 
-  // Check side boundaries
-  if (Math.abs(ball.position.x) > 10) {
+  // Check side boundaries - adjust for singles/doubles
+  const sideLimit = gameState.mode === 'singles' ? 5 : 10; // Narrower court for singles
+  if (Math.abs(ball.position.x) > sideLimit) {
     // Store previous position for impact effect
     const impactPosition = ball.position.clone();
     const normal = new THREE.Vector3(-Math.sign(ball.position.x), 0, 0);
     
     // Bounce ball
     ball.velocity.x *= -1;
-    ball.position.x = Math.sign(ball.position.x) * 10;
+    ball.position.x = Math.sign(ball.position.x) * sideLimit;
     
     // Create impact particles
     createImpactParticles(impactPosition, normal, 0x00ff00); // Green particles for wall bounce
@@ -1519,10 +1863,12 @@ function simulateFrame(inputs) {
     shakeCamera(0.03);
   }
 
-  // Check racket collisions
+  // Check racket collisions - adjust hit distance based on game mode
+  const hitDistance = gameState.mode === 'singles' ? 1.2 : 1.0; // Slightly larger hit area for singles
+  
   for (let id in inputs) {
     const racket = rackets[id];
-    if (racket && ball.position.distanceTo(racket.position) < 1) {
+    if (racket && ball.position.distanceTo(racket.position) < hitDistance) {
       // Calculate normal from racket to ball
       const normal = ball.position.clone().sub(racket.position).normalize();
       
@@ -1531,6 +1877,11 @@ function simulateFrame(inputs) {
       ball.velocity.x += Math.cos(swing.angle * Math.PI / 180) * swing.velocity * 0.1;
       ball.velocity.z += Math.sin(swing.angle * Math.PI / 180) * swing.velocity * 0.1;
       ball.velocity.y += 0.5; // Add some upward force
+      
+      // In singles mode, add a bit more power to shots
+      if (gameState.mode === 'singles') {
+        ball.velocity.multiplyScalar(1.1);
+      }
       
       // Create impact particles
       createImpactParticles(
@@ -1707,9 +2058,24 @@ function resetBall() {
   
   const racket = rackets[servingPlayer];
   if (racket) {
+    // Position the ball near the server's racket
+    ball.position.x = racket.position.x;
+    ball.position.z = racket.position.z + (racket.position.z > 0 ? -0.5 : 0.5);
+    
+    // Set velocity direction based on server's position
     const direction = racket.position.z > 0 ? -1 : 1;
-    ball.velocity.set(0.1, 0, 0.05 * direction);
+    
+    // Adjust velocity based on game mode
+    if (gameState.mode === 'singles') {
+      // In singles, serve straight ahead with slight angle
+      ball.velocity.set(0.05, 0, 0.15 * direction);
+    } else {
+      // In doubles, serve diagonally toward opponent's court
+      const sideDirection = racket.position.x > 0 ? -1 : 1;
+      ball.velocity.set(0.1 * sideDirection, 0, 0.1 * direction);
+    }
   } else {
+    // Fallback if server's racket not found
     ball.velocity.set(0.1, 0, 0.05);
   }
   
@@ -1718,12 +2084,22 @@ function resetBall() {
   
   // Add a slight shake for serve
   shakeCamera(0.02);
+  
+  // Show serving indicator
+  showStatusIndicator(`${servingPlayer === myId ? 'Your' : 'Player'} Serve!`, 0xffffff);
 }
 
 function render() {
-  // Dynamic camera following the ball
-  const targetX = ball.position.x * 0.1;
-  const targetZ = ball.position.z * 0.1 + 10;
+  // Dynamic camera following the ball - adjust for game mode
+  let targetX = ball.position.x * 0.1;
+  let targetZ = ball.position.z * 0.1 + 10;
+  let targetY = 5;
+  
+  // For singles mode, position camera higher and further back for better view
+  if (gameState.mode === 'singles') {
+    targetZ += 2; // Position further back
+    targetY += 1; // Position higher
+  }
   
   // Apply camera shake if active
   if (cameraShake.intensity > 0.01) {
@@ -1744,7 +2120,7 @@ function render() {
   // Apply camera position with shake
   camera.position.x += (targetX - camera.position.x) * 0.05 + cameraShake.offsetX;
   camera.position.z += (targetZ - camera.position.z) * 0.05 + cameraShake.offsetZ;
-  camera.position.y = 5 + cameraShake.offsetY;
+  camera.position.y = targetY + cameraShake.offsetY;
   
   // Look at ball with slight shake offset
   camera.lookAt(
@@ -1786,8 +2162,14 @@ function updateUI() {
   const gamesDisplay = `${gameState.games[0]}-${gameState.games[1]}`;
   const setsDisplay = `${gameState.sets[0]}-${gameState.sets[1]}`;
   
-  document.getElementById('score').textContent = `${pointsDisplay} | Games: ${gamesDisplay} | Sets: ${setsDisplay}`;
-  document.getElementById('players').textContent = `${gameState.players.length}/4`;
+  // Add game mode to score display
+  const modeDisplay = gameState.mode === 'singles' ? 'Singles' : 'Doubles';
+  
+  document.getElementById('score').textContent = `${modeDisplay} | ${pointsDisplay} | Games: ${gamesDisplay} | Sets: ${setsDisplay}`;
+  
+  // Update player count based on game mode
+  const maxPlayers = gameState.mode === 'singles' ? 2 : 4;
+  document.getElementById('players').textContent = `${Math.min(gameState.players.length, maxPlayers)}/${maxPlayers}`;
   
   // Update server indicator
   updateServerIndicator();
@@ -2153,38 +2535,44 @@ function addToLobby(id, videoElement) {
 }
 
 function updateLobby() {
-  // Count total players (including local player)
-  const totalPlayers = gameState.players.length + 1; // +1 for local
-  const allJoined = totalPlayers >= 4;
+  // Count total players
+  const totalPlayers = gameState.players.length;
+  
+  // Determine required players based on game mode
+  const requiredPlayers = gameState.mode === 'singles' ? 2 : 4;
+  const allJoined = totalPlayers >= requiredPlayers;
   const allReady = allJoined && Object.values(readyStates).every(ready => ready);
   
   // Update global player counter
   const playerCountElement = document.getElementById('player-count');
   if (playerCountElement) {
-    playerCountElement.textContent = `${totalPlayers}/4`;
-    playerCountElement.style.color = totalPlayers >= 4 ? '#00ff00' : '#ffffff';
+    playerCountElement.textContent = `${totalPlayers}/${requiredPlayers}`;
+    playerCountElement.style.color = totalPlayers >= requiredPlayers ? '#00ff00' : '#ffffff';
   }
   
   // Update ready button and status
   document.getElementById('ready-btn').disabled = !allJoined;
   document.getElementById('ready-status').textContent = allJoined ?
     (allReady ? 'All ready! Starting game...' : 'All players joined! Click ready.') :
-    `Waiting for players... (${totalPlayers}/4)`;
+    `Waiting for players... (${totalPlayers}/${requiredPlayers})`;
   
   // Update player slots
   const team1 = document.getElementById('team1');
   const team2 = document.getElementById('team2');
   
+  // Determine max players per team based on game mode
+  const maxPlayersPerTeam = gameState.mode === 'singles' ? 1 : 2;
+  
   if (team1) {
-    // Count actual players in team 1 (even indices in players array + local player)
-    let team1Count = 1; // Start with 1 for local player
+    // Count actual players in team 1 (even indices in players array)
+    let team1Count = 0;
     gameState.players.forEach((id, index) => {
-      if (index % 2 === 0 && id !== myId) team1Count++;
+      if (index % 2 === 0) team1Count++;
     });
-    team1Count = Math.min(team1Count, 2); // Cap at 2 players
+    team1Count = Math.min(team1Count, maxPlayersPerTeam); // Cap at max players per team
     
-    team1.querySelector('h2').textContent = `Team 1 (${team1Count}/2)`;
-    team1.querySelector('h2').style.backgroundColor = team1Count >= 2 ? 'rgba(255,87,34,1)' : 'rgba(255,87,34,0.7)';
+    team1.querySelector('h2').textContent = `Team 1 (${team1Count}/${maxPlayersPerTeam})`;
+    team1.querySelector('h2').style.backgroundColor = team1Count >= maxPlayersPerTeam ? 'rgba(255,87,34,1)' : 'rgba(255,87,34,0.7)';
   }
   
   if (team2) {
@@ -2193,10 +2581,10 @@ function updateLobby() {
     gameState.players.forEach((id, index) => {
       if (index % 2 === 1) team2Count++;
     });
-    team2Count = Math.min(team2Count, 2); // Cap at 2 players
+    team2Count = Math.min(team2Count, maxPlayersPerTeam); // Cap at max players per team
     
-    team2.querySelector('h2').textContent = `Team 2 (${team2Count}/2)`;
-    team2.querySelector('h2').style.backgroundColor = team2Count >= 2 ? 'rgba(33,150,243,1)' : 'rgba(33,150,243,0.7)';
+    team2.querySelector('h2').textContent = `Team 2 (${team2Count}/${maxPlayersPerTeam})`;
+    team2.querySelector('h2').style.backgroundColor = team2Count >= maxPlayersPerTeam ? 'rgba(33,150,243,1)' : 'rgba(33,150,243,0.7)';
   }
   
   // Update ready indicators
@@ -2215,7 +2603,7 @@ function updateLobby() {
     startGame();
   }
   
-  console.log('Lobby updated. Total players:', totalPlayers);
+  console.log('Lobby updated. Total players:', totalPlayers, 'Mode:', gameState.mode);
 }
 
 function startGame() {
@@ -2231,8 +2619,11 @@ function startGame() {
     document.getElementById('videos').appendChild(video);
   });
   
-  // Show game start indicator
-  showStatusIndicator("Game Start!", 0xffffff);
+  // Show game start indicator with game mode
+  showStatusIndicator(`${gameState.mode === 'singles' ? 'Singles' : 'Doubles'} Match Start!`, 0xffffff);
+  
+  // Create rackets and characters for all players
+  setupPlayersForGameMode();
   
   // Initialize server indicator
   updateServerIndicator();
@@ -2242,6 +2633,91 @@ function startGame() {
   
   // Play game start sound
   playSound(700, 0.5);
+}
+
+// Set up players based on game mode (singles or doubles)
+function setupPlayersForGameMode() {
+  console.log(`Setting up players for ${gameState.mode} mode`);
+  
+  // Clear any existing rackets and characters
+  Object.keys(rackets).forEach(id => {
+    try {
+      scene.remove(rackets[id]);
+    } catch (error) {
+      console.log("Error removing racket:", error);
+    }
+    delete rackets[id];
+  });
+  
+  Object.keys(characters).forEach(id => {
+    try {
+      scene.remove(characters[id]);
+    } catch (error) {
+      console.log("Error removing character:", error);
+    }
+    delete characters[id];
+  });
+  
+  // Define positions based on game mode
+  let positions;
+  
+  if (gameState.mode === 'singles') {
+    // Singles mode - one player on each side of the net
+    positions = [
+      { x: 0, z: 3 },  // Team 1 player
+      { x: 0, z: -3 }  // Team 2 player
+    ];
+  } else {
+    // Doubles mode - two players on each side of the net
+    positions = [
+      { x: -3, z: 3 },  // Team 1 player 1
+      { x: 3, z: -3 },  // Team 2 player 1
+      { x: 3, z: 3 },   // Team 1 player 2
+      { x: -3, z: -3 }  // Team 2 player 2
+    ];
+  }
+  
+  // Create rackets and characters for each player
+  gameState.players.forEach((playerId, index) => {
+    // Skip if we've reached the maximum players for this mode
+    if ((gameState.mode === 'singles' && index >= 2) ||
+        (gameState.mode === 'doubles' && index >= 4)) {
+      return;
+    }
+    
+    // Create Wii-style racket
+    const racket = createWiiRacket();
+    
+    // Position racket based on player index
+    if (positions[index]) {
+      racket.position.set(positions[index].x, 0.5, positions[index].z);
+    }
+    
+    rackets[playerId] = racket;
+    scene.add(racket);
+    
+    // Create character for the player
+    const teamIndex = index % 2;
+    const teamKey = teamIndex === 0 ? 'team1' : 'team2';
+    
+    // Clone the character model for this player
+    const character = characterModels[teamKey].clone();
+    character.position.set(
+      racket.position.x,
+      0, // Place on ground
+      racket.position.z + ((positions[index].z > 0) ? -0.5 : 0.5) // Offset from racket
+    );
+    
+    // Rotate character to face the net
+    if (positions[index].z > 0) {
+      character.rotation.y = Math.PI; // Face forward (toward negative Z)
+    }
+    
+    characters[playerId] = character;
+    scene.add(character);
+  });
+  
+  console.log(`Created ${Object.keys(rackets).length} rackets and ${Object.keys(characters).length} characters`);
 }
 
 // Function to trigger camera shake with specified intensity
