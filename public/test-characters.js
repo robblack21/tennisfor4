@@ -186,11 +186,11 @@ function createDefaultCharacterModel(teamIndex) {
         rightLeg: rightLeg
       },
       restPose: {
-        head: { position: new THREE.Vector3(head.position.x, head.position.y, head.position.z), rotation: new THREE.Euler(head.rotation.x, head.rotation.y, head.rotation.z) },
-        leftArm: { position: new THREE.Vector3(leftArm.position.x, leftArm.position.y, leftArm.position.z), rotation: new THREE.Euler(leftArm.rotation.x, leftArm.rotation.y, leftArm.rotation.z) },
-        rightArm: { position: new THREE.Vector3(rightArm.position.x, rightArm.position.y, rightArm.position.z), rotation: new THREE.Euler(rightArm.rotation.x, rightArm.rotation.y, rightArm.rotation.z) },
-        leftLeg: { position: new THREE.Vector3(leftLeg.position.x, leftLeg.position.y, leftLeg.position.z), rotation: new THREE.Euler(leftLeg.rotation.x, leftLeg.rotation.y, leftLeg.rotation.z) },
-        rightLeg: { position: new THREE.Vector3(rightLeg.position.x, rightLeg.position.y, rightLeg.position.z), rotation: new THREE.Euler(rightLeg.rotation.x, rightLeg.rotation.y, rightLeg.rotation.z) }
+        head: { position: new THREE.Vector3(head.position.x, head.position.y, head.position.z), rotation: { x: head.rotation.x, y: head.rotation.y, z: head.rotation.z } },
+        leftArm: { position: new THREE.Vector3(leftArm.position.x, leftArm.position.y, leftArm.position.z), rotation: { x: leftArm.rotation.x, y: leftArm.rotation.y, z: leftArm.rotation.z } },
+        rightArm: { position: new THREE.Vector3(rightArm.position.x, rightArm.position.y, rightArm.position.z), rotation: { x: rightArm.rotation.x, y: rightArm.rotation.y, z: rightArm.rotation.z } },
+        leftLeg: { position: new THREE.Vector3(leftLeg.position.x, leftLeg.position.y, leftLeg.position.z), rotation: { x: leftLeg.rotation.x, y: leftLeg.rotation.y, z: leftLeg.rotation.z } },
+        rightLeg: { position: new THREE.Vector3(rightLeg.position.x, rightLeg.position.y, rightLeg.position.z), rotation: { x: rightLeg.rotation.x, y: rightLeg.rotation.y, z: rightLeg.rotation.z } }
       },
       animations: {
         swinging: false,
@@ -252,13 +252,17 @@ function testCharacterAnimations(character) {
     } else {
       // Reset to rest pose
       if (rig.restPose.rightArm) {
-        rightArm.rotation.copy(rig.restPose.rightArm.rotation);
+        rightArm.rotation.x = rig.restPose.rightArm.rotation.x || 0;
+        rightArm.rotation.y = rig.restPose.rightArm.rotation.y || 0;
+        rightArm.rotation.z = rig.restPose.rightArm.rotation.z || 0;
       } else {
         rightArm.rotation.set(0, 0, 0);
       }
       
       if (rig.bones.head && rig.restPose.head) {
-        rig.bones.head.rotation.copy(rig.restPose.head.rotation);
+        rig.bones.head.rotation.x = rig.restPose.head.rotation.x || 0;
+        rig.bones.head.rotation.y = rig.restPose.head.rotation.y || 0;
+        rig.bones.head.rotation.z = rig.restPose.head.rotation.z || 0;
       }
       
       rig.animations.swinging = false;
