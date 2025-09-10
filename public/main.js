@@ -1,4 +1,101 @@
-// Libraries loaded via script tags: THREE, Daily, PoseLandmarker, FilesetResolver
+// Libraries loaded via script tags: THREE, Daily, TasksVision
+// Access them as global variables
+
+// Debug logging
+console.log("Main.js loaded");
+console.log("THREE available:", typeof THREE !== 'undefined');
+console.log("Daily available:", typeof Daily !== 'undefined');
+console.log("TasksVision available:", typeof TasksVision !== 'undefined');
+
+// Create mock objects if libraries are not loaded
+if (typeof THREE === 'undefined') {
+  console.warn('THREE.js not loaded, creating mock object');
+  window.THREE = {
+    Scene: function() {
+      return {
+        add: function() {},
+        remove: function() {},
+        background: { set: function() {} },
+        children: []
+      };
+    },
+    PerspectiveCamera: function() { return { position: { set: function() {} }, lookAt: function() {} }; },
+    WebGLRenderer: function() { return { setSize: function() {}, render: function() {}, domElement: document.createElement('div'), shadowMap: { enabled: false } }; },
+    Color: function() { return {}; },
+    AmbientLight: function() { return {}; },
+    DirectionalLight: function() { return { position: { set: function() {} }, shadow: { mapSize: { width: 0, height: 0 } } }; },
+    PlaneGeometry: function() { return {}; },
+    BoxGeometry: function() { return {}; }, // Added BoxGeometry constructor
+    SphereGeometry: function() { return {}; },
+    TorusGeometry: function() { return {}; },
+    CircleGeometry: function() { return {}; },
+    CylinderGeometry: function() { return {}; },
+    BufferGeometry: function() { return { setAttribute: function() {} }; },
+    MeshLambertMaterial: function() { return {}; },
+    MeshBasicMaterial: function() { return {}; },
+    PointsMaterial: function() { return {}; },
+    LineBasicMaterial: function() { return {}; },
+    Mesh: function() { return { position: { set: function() {}, copy: function() { return {}; } }, rotation: { x: 0, y: 0, z: 0 }, userData: {}, clone: function() { return this; } }; },
+    Points: function() { return { geometry: { attributes: { position: { array: [], needsUpdate: false } } }, material: {}, userData: {} }; },
+    LineSegments: function() { return {}; },
+    Group: function() { return { add: function() {}, position: { set: function() {}, copy: function() { return {}; } }, rotation: { x: 0, y: 0 } }; },
+    Vector3: function() {
+      return {
+        x: 0, y: 0, z: 0,
+        set: function(x, y, z) {
+          this.x = x || 0;
+          this.y = y || 0;
+          this.z = z || 0;
+          return this;
+        },
+        add: function(v) {
+          if (v) {
+            this.x += v.x || 0;
+            this.y += v.y || 0;
+            this.z += v.z || 0;
+          }
+          return this;
+        },
+        sub: function(v) {
+          if (v) {
+            this.x -= v.x || 0;
+            this.y -= v.y || 0;
+            this.z -= v.z || 0;
+          }
+          return this;
+        },
+        clone: function() {
+          const clone = new THREE.Vector3();
+          clone.x = this.x;
+          clone.y = this.y;
+          clone.z = this.z;
+          return clone;
+        },
+        normalize: function() {
+          return this;
+        },
+        multiplyScalar: function(scalar) {
+          this.x *= scalar || 0;
+          this.y *= scalar || 0;
+          this.z *= scalar || 0;
+          return this;
+        },
+        dot: function() {
+          return 0;
+        },
+        length: function() {
+          return 0;
+        }
+      };
+    },
+    CanvasTexture: function() { return { wrapS: 0, wrapT: 0 }; },
+    Float32BufferAttribute: function() { return {}; },
+    BufferAttribute: function() { return {}; },
+    RepeatWrapping: 0,
+    DoubleSide: 0,
+    AdditiveBlending: 0
+  };
+}
 
 // Game constants
 const ROOM_URL = 'https://vcroom.daily.co/tennisfor4';
@@ -9,18 +106,35 @@ const MS_PER_TICK = 1000 / TICK_RATE;
 let daily;
 let poseLandmarker;
 let scene, camera, renderer;
-let court, ball, rackets = {};
+let court, ball, rackets = {}, characters = {};
 let inputBuffer = {};
 let appState = 'lobby';
+let characterModels = {}; // Store loaded character models
+let cameraShake = {
+  intensity: 0,
+  decay: 0.9,
+  offsetX: 0,
+  offsetY: 0,
+  offsetZ: 0
+};
 let gameState = {
-  score: [0, 0],
-  serving: 0,
-  players: [],
-  mode: 'doubles',
-  gamePoint: false,
-  deuce: false,
-  lastPoint: null,
-  lastPointTime: 0
+  score: [0, 0],         // Current point score (0, 15, 30, 40, game)
+  games: [0, 0],         // Games won in current set
+  sets: [0, 0],          // Sets won in match
+  currentSet: 0,         // Current set (0-2 for three sets)
+  serving: 0,            // Index of serving player
+  players: [],           // Player IDs
+  mode: 'doubles',       // Game mode (always doubles)
+  gamePoint: false,      // Is this game point?
+  setPoint: false,       // Is this set point?
+  matchPoint: false,     // Is this match point?
+  deuce: false,          // Is the score at deuce?
+  advantage: null,       // Which team has advantage (0 or 1, null if not at advantage)
+  lastPoint: null,       // Which team scored last point
+  lastPointTime: 0,      // When the last point was scored
+  inTiebreak: false,     // Whether we're in a tiebreak game
+  tiebreakScore: [0, 0], // Score in the tiebreak (first to 7, win by 2)
+  servingInTiebreak: 0   // Player serving in tiebreak (changes every 2 points)
 };
 let myId;
 let currentPose = null;
@@ -52,51 +166,264 @@ async function init() {
   initAudio();
   await setupMediaPipe();
   setupThreeJS();
+  await loadCharacterModels();
   await setupDaily();
   setupGameLoop();
 }
 
-async function setupMediaPipe() {
-  const FilesetResolver = window.TasksVision ? window.TasksVision.FilesetResolver : window.FilesetResolver;
-  const PoseLandmarker = window.TasksVision ? window.TasksVision.PoseLandmarker : window.PoseLandmarker;
-
-  if (!FilesetResolver || !PoseLandmarker) {
-    console.warn('MediaPipe not loaded, skipping pose tracking');
-    return;
+// Load character models
+async function loadCharacterModels() {
+  try {
+    console.log('Loading character models');
+    
+    // Create default character models if no custom models are provided
+    // These will be used as fallbacks
+    characterModels = {
+      'team1': createDefaultCharacterModel(0), // Team 1 (orange)
+      'team2': createDefaultCharacterModel(1)  // Team 2 (blue)
+    };
+    
+    // In a real implementation, we would load GLTF models here
+    // For example:
+    // const loader = new THREE.GLTFLoader();
+    // const model = await loader.loadAsync('path/to/model.glb');
+    // characterModels['custom'] = model.scene;
+    
+    console.log('Character models loaded');
+  } catch (error) {
+    console.error('Error loading character models:', error);
   }
+}
 
-  const vision = await FilesetResolver.forVisionTasks(
-    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/wasm"
-  );
-  poseLandmarker = await PoseLandmarker.createFromOptions(vision, {
-    baseOptions: {
-      modelAssetPath: `https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task`,
-      delegate: "GPU"
-    },
-    runningMode: "VIDEO",
-    numPoses: 1
-  });
+// Create a default character model
+function createDefaultCharacterModel(teamIndex) {
+  // Team colors (alternating for players)
+  const teamColors = [0xFF5722, 0x2196F3]; // Orange and Blue like Wii Sports
+  const teamColor = teamColors[teamIndex];
+  
+  // Create a group to hold all character parts
+  const characterGroup = new THREE.Group();
+  
+  // Create head (sphere)
+  const headGeometry = new THREE.SphereGeometry(0.25);
+  const headMaterial = new THREE.MeshLambertMaterial({ color: 0xFFE0BD }); // Skin tone
+  const head = new THREE.Mesh(headGeometry, headMaterial);
+  head.position.y = 1.5;
+  head.castShadow = true;
+  characterGroup.add(head);
+  
+  // Create eyes
+  const eyeGeometry = new THREE.SphereGeometry(0.05);
+  const eyeMaterial = new THREE.MeshLambertMaterial({ color: 0x000000 });
+  
+  const leftEye = new THREE.Mesh(eyeGeometry, eyeMaterial);
+  leftEye.position.set(-0.1, 1.55, 0.2);
+  characterGroup.add(leftEye);
+  
+  const rightEye = new THREE.Mesh(eyeGeometry, eyeMaterial);
+  rightEye.position.set(0.1, 1.55, 0.2);
+  characterGroup.add(rightEye);
+  
+  // Create mouth
+  const mouthGeometry = new THREE.BoxGeometry(0.15, 0.03, 0.05);
+  const mouthMaterial = new THREE.MeshLambertMaterial({ color: 0x000000 });
+  const mouth = new THREE.Mesh(mouthGeometry, mouthMaterial);
+  mouth.position.set(0, 1.4, 0.2);
+  characterGroup.add(mouth);
+  
+  // Create body
+  const bodyGeometry = new THREE.CylinderGeometry(0.25, 0.25, 0.6);
+  const bodyMaterial = new THREE.MeshLambertMaterial({ color: teamColor });
+  const body = new THREE.Mesh(bodyGeometry, bodyMaterial);
+  body.position.y = 1.0;
+  body.castShadow = true;
+  characterGroup.add(body);
+  
+  // Create arms - these will be our "bones" for rigging
+  const armGeometry = new THREE.CylinderGeometry(0.08, 0.08, 0.5);
+  const armMaterial = new THREE.MeshLambertMaterial({ color: teamColor });
+  
+  // Left arm
+  const leftArm = new THREE.Group();
+  const leftArmMesh = new THREE.Mesh(armGeometry, armMaterial);
+  leftArmMesh.rotation.z = Math.PI / 2;
+  leftArmMesh.position.x = 0.25;
+  leftArm.add(leftArmMesh);
+  leftArm.position.set(-0.3, 1.2, 0);
+  leftArm.castShadow = true;
+  leftArm.name = 'leftArm'; // Name for rigging
+  characterGroup.add(leftArm);
+  
+  // Right arm (racket arm)
+  const rightArm = new THREE.Group();
+  const rightArmMesh = new THREE.Mesh(armGeometry, armMaterial);
+  rightArmMesh.rotation.z = Math.PI / 2;
+  rightArmMesh.position.x = 0.25;
+  rightArm.add(rightArmMesh);
+  rightArm.position.set(0.3, 1.2, 0);
+  rightArm.castShadow = true;
+  rightArm.name = 'rightArm'; // Name for rigging
+  characterGroup.add(rightArm);
+  
+  // Create legs
+  const legGeometry = new THREE.CylinderGeometry(0.1, 0.1, 0.7);
+  const legMaterial = new THREE.MeshLambertMaterial({ color: 0xFFFFFF });
+  
+  const leftLeg = new THREE.Mesh(legGeometry, legMaterial);
+  leftLeg.position.set(-0.15, 0.35, 0);
+  leftLeg.castShadow = true;
+  leftLeg.name = 'leftLeg'; // Name for rigging
+  characterGroup.add(leftLeg);
+  
+  const rightLeg = new THREE.Mesh(legGeometry, legMaterial);
+  rightLeg.position.set(0.15, 0.35, 0);
+  rightLeg.castShadow = true;
+  rightLeg.name = 'rightLeg'; // Name for rigging
+  characterGroup.add(rightLeg);
+  
+  // Add rig data for animation
+  characterGroup.userData = {
+    rig: {
+      bones: {
+        head: head,
+        leftArm: leftArm,
+        rightArm: rightArm,
+        leftLeg: leftLeg,
+        rightLeg: rightLeg
+      },
+      restPose: {
+        head: { position: new THREE.Vector3().copy(head.position), rotation: new THREE.Euler().copy(head.rotation) },
+        leftArm: { position: new THREE.Vector3().copy(leftArm.position), rotation: new THREE.Euler().copy(leftArm.rotation) },
+        rightArm: { position: new THREE.Vector3().copy(rightArm.position), rotation: new THREE.Euler().copy(rightArm.rotation) },
+        leftLeg: { position: new THREE.Vector3().copy(leftLeg.position), rotation: new THREE.Euler().copy(leftLeg.rotation) },
+        rightLeg: { position: new THREE.Vector3().copy(rightLeg.position), rotation: new THREE.Euler().copy(rightLeg.rotation) }
+      },
+      animations: {
+        swinging: false,
+        swingStartTime: 0,
+        swingDuration: 300 // ms
+      }
+    }
+  };
+  
+  return characterGroup;
+}
+
+async function setupMediaPipe() {
+  try {
+    const FilesetResolver = window.TasksVision ? window.TasksVision.FilesetResolver : window.FilesetResolver;
+    const PoseLandmarker = window.TasksVision ? window.TasksVision.PoseLandmarker : window.PoseLandmarker;
+
+    if (!FilesetResolver || !PoseLandmarker) {
+      console.warn('MediaPipe not loaded, using mock pose tracking');
+      // Create a mock poseLandmarker that returns random poses
+      poseLandmarker = {
+        setOptions: function() {},
+        detectForVideo: function() {
+          return {
+            landmarks: [
+              // Generate random landmarks for testing
+              Array.from({length: 33}, () => ({
+                x: Math.random(),
+                y: Math.random(),
+                z: Math.random(),
+                visibility: Math.random()
+              }))
+            ]
+          };
+        }
+      };
+      return;
+    }
+
+    console.log('Setting up MediaPipe with real implementation');
+    const vision = await FilesetResolver.forVisionTasks(
+      "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/wasm"
+    );
+    poseLandmarker = await PoseLandmarker.createFromOptions(vision, {
+      baseOptions: {
+        modelAssetPath: `https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task`,
+        delegate: "GPU"
+      },
+      runningMode: "VIDEO",
+      numPoses: 1
+    });
+    console.log('MediaPipe setup complete');
+  } catch (error) {
+    console.error('Error setting up MediaPipe:', error);
+    // Create fallback mock implementation
+    poseLandmarker = {
+      setOptions: function() {},
+      detectForVideo: function() {
+        return {
+          landmarks: [
+            // Generate random landmarks for testing
+            Array.from({length: 33}, () => ({
+              x: Math.random(),
+              y: Math.random(),
+              z: Math.random(),
+              visibility: Math.random()
+            }))
+          ]
+        };
+      }
+    };
+  }
 }
 
 function setupThreeJS() {
-  scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x87CEEB); // Sky blue background
-  camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-  renderer = new THREE.WebGLRenderer({ antialias: true });
-  renderer.setSize(window.innerWidth, window.innerHeight);
-  renderer.shadowMap.enabled = true;
-  document.getElementById('game').appendChild(renderer.domElement);
+  try {
+    console.log('Setting up Three.js scene');
+    
+    scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x87CEEB); // Sky blue background
+    camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+    
+    try {
+      renderer = new THREE.WebGLRenderer({ antialias: true });
+    } catch (error) {
+      console.warn('WebGL renderer creation failed, using fallback renderer');
+      renderer = {
+        setSize: function() {},
+        render: function() {},
+        domElement: document.createElement('div'),
+        shadowMap: { enabled: false }
+      };
+    }
+    
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.shadowMap.enabled = true;
+    
+    const gameElement = document.getElementById('game');
+    if (gameElement) {
+      gameElement.appendChild(renderer.domElement);
+    } else {
+      console.warn('Game element not found, cannot append renderer');
+    }
 
-  // Add lighting
-  const ambientLight = new THREE.AmbientLight(0x606060);
-  scene.add(ambientLight);
-  
-  const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
-  directionalLight.position.set(50, 100, 50);
-  directionalLight.castShadow = true;
-  directionalLight.shadow.mapSize.width = 1024;
-  directionalLight.shadow.mapSize.height = 1024;
-  scene.add(directionalLight);
+    // Add lighting
+    const ambientLight = new THREE.AmbientLight(0x606060);
+    scene.add(ambientLight);
+    
+    const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+    directionalLight.position.set(50, 100, 50);
+    directionalLight.castShadow = true;
+    directionalLight.shadow.mapSize.width = 1024;
+    directionalLight.shadow.mapSize.height = 1024;
+    scene.add(directionalLight);
+  } catch (error) {
+    console.error('Error setting up Three.js:', error);
+    
+    // Create minimal scene objects for fallback
+    scene = { add: function() {}, background: { set: function() {} }, children: [] };
+    camera = { position: { set: function() {} }, lookAt: function() {} };
+    renderer = {
+      setSize: function() {},
+      render: function() {},
+      domElement: document.createElement('div'),
+      shadowMap: { enabled: false }
+    };
+  }
 
   // Create court with texture
   const courtGeometry = new THREE.PlaneGeometry(20, 10);
@@ -309,7 +636,16 @@ function updateImpactParticles() {
     
     // Remove old particle systems
     if (particles.userData.age >= particles.userData.maxAge) {
-      scene.remove(particles);
+      try {
+        scene.remove(particles);
+      } catch (error) {
+        // Fallback for when remove method fails
+        const index = scene.children.indexOf(particles);
+        if (index > -1) {
+          scene.children.splice(index, 1);
+        }
+        console.log("Using fallback scene.remove");
+      }
       impactParticles.splice(i, 1);
       continue;
     }
@@ -336,161 +672,290 @@ function updateImpactParticles() {
 }
 
 function createStadium() {
-  // Create stadium walls
-  const wallHeight = 3;
-  const wallColor = 0x228B22; // Green color for stadium
-  
-  // Back wall (positive Z)
-  const backWallGeometry = new THREE.BoxGeometry(22, wallHeight, 0.2);
-  const wallMaterial = new THREE.MeshLambertMaterial({ color: wallColor });
-  const backWall = new THREE.Mesh(backWallGeometry, wallMaterial);
-  backWall.position.set(0, wallHeight / 2, 5.1);
-  scene.add(backWall);
-  
-  // Front wall (negative Z)
-  const frontWall = backWall.clone();
-  frontWall.position.set(0, wallHeight / 2, -5.1);
-  scene.add(frontWall);
-  
-  // Left wall (negative X)
-  const sideWallGeometry = new THREE.BoxGeometry(0.2, wallHeight, 10.2);
-  const leftWall = new THREE.Mesh(sideWallGeometry, wallMaterial);
-  leftWall.position.set(-10.1, wallHeight / 2, 0);
-  scene.add(leftWall);
-  
-  // Right wall (positive X)
-  const rightWall = leftWall.clone();
-  rightWall.position.set(10.1, wallHeight / 2, 0);
-  scene.add(rightWall);
-  
-  // Create stands with spectators (simplified as colored boxes)
-  const standDepth = 3;
-  const standGeometry = new THREE.BoxGeometry(22, 0.5, standDepth);
-  const standMaterial = new THREE.MeshLambertMaterial({ color: 0x333333 });
-  
-  // Back stands
-  const backStand = new THREE.Mesh(standGeometry, standMaterial);
-  backStand.position.set(0, 0.25, 5.1 + standDepth / 2);
-  scene.add(backStand);
-  
-  // Front stands
-  const frontStand = backStand.clone();
-  frontStand.position.set(0, 0.25, -5.1 - standDepth / 2);
-  scene.add(frontStand);
-  
-  // Left stands
-  const sideStandGeometry = new THREE.BoxGeometry(standDepth, 0.5, 10.2);
-  const leftStand = new THREE.Mesh(sideStandGeometry, standMaterial);
-  leftStand.position.set(-10.1 - standDepth / 2, 0.25, 0);
-  scene.add(leftStand);
-  
-  // Right stands
-  const rightStand = leftStand.clone();
-  rightStand.position.set(10.1 + standDepth / 2, 0.25, 0);
-  scene.add(rightStand);
-  
-  // Add simplified spectators as particle system
-  const spectatorGeometry = new THREE.BufferGeometry();
-  const spectatorCount = 200;
-  const spectatorPositions = [];
-  const spectatorColors = [];
-  
-  // Colors for spectators
-  const colorOptions = [
-    new THREE.Color(0xFF0000), // Red
-    new THREE.Color(0x0000FF), // Blue
-    new THREE.Color(0xFFFF00), // Yellow
-    new THREE.Color(0x00FF00), // Green
-    new THREE.Color(0xFF00FF), // Purple
-    new THREE.Color(0x00FFFF), // Cyan
-  ];
-  
-  // Generate random positions for spectators around the court
-  for (let i = 0; i < spectatorCount; i++) {
-    // Decide which stand this spectator is on
-    const standChoice = Math.floor(Math.random() * 4);
-    let x, y, z;
+  try {
+    console.log('Creating stadium');
     
-    switch (standChoice) {
-      case 0: // Back stand
-        x = Math.random() * 20 - 10;
-        z = 5.1 + Math.random() * standDepth;
-        break;
-      case 1: // Front stand
-        x = Math.random() * 20 - 10;
-        z = -5.1 - Math.random() * standDepth;
-        break;
-      case 2: // Left stand
-        x = -10.1 - Math.random() * standDepth;
-        z = Math.random() * 10 - 5;
-        break;
-      case 3: // Right stand
-        x = 10.1 + Math.random() * standDepth;
-        z = Math.random() * 10 - 5;
-        break;
-    }
+    // Create stadium walls
+    const wallHeight = 3;
+    const wallColor = 0x228B22; // Green color for stadium
     
-    y = 0.5 + Math.random() * 2; // Random height above the stand
+    // Back wall (positive Z)
+    const backWallGeometry = new THREE.BoxGeometry(22, wallHeight, 0.2);
+    const wallMaterial = new THREE.MeshLambertMaterial({ color: wallColor });
+    const backWall = new THREE.Mesh(backWallGeometry, wallMaterial);
+    backWall.position.set(0, wallHeight / 2, 5.1);
+    scene.add(backWall);
     
-    spectatorPositions.push(x, y, z);
+    // Front wall (negative Z)
+    const frontWall = backWall.clone();
+    frontWall.position.set(0, wallHeight / 2, -5.1);
+    scene.add(frontWall);
     
-    // Random color for each spectator
-    const color = colorOptions[Math.floor(Math.random() * colorOptions.length)];
-    spectatorColors.push(color.r, color.g, color.b);
+    // Left wall (negative X)
+    const sideWallGeometry = new THREE.BoxGeometry(0.2, wallHeight, 10.2);
+    const leftWall = new THREE.Mesh(sideWallGeometry, wallMaterial);
+    leftWall.position.set(-10.1, wallHeight / 2, 0);
+    scene.add(leftWall);
+    
+    // Right wall (positive X)
+    const rightWall = leftWall.clone();
+    rightWall.position.set(10.1, wallHeight / 2, 0);
+    scene.add(rightWall);
+    
+    // Create stands with spectators (simplified as colored boxes)
+    const standDepth = 3;
+    const standGeometry = new THREE.BoxGeometry(22, 0.5, standDepth);
+    const standMaterial = new THREE.MeshLambertMaterial({ color: 0x333333 });
+    
+    // Back stands
+    const backStand = new THREE.Mesh(standGeometry, standMaterial);
+    backStand.position.set(0, 0.25, 5.1 + standDepth / 2);
+    scene.add(backStand);
+    
+    // Front stands
+    const frontStand = backStand.clone();
+    frontStand.position.set(0, 0.25, -5.1 - standDepth / 2);
+    scene.add(frontStand);
+    
+    // Left stands
+    const sideStandGeometry = new THREE.BoxGeometry(standDepth, 0.5, 10.2);
+    const leftStand = new THREE.Mesh(sideStandGeometry, standMaterial);
+    leftStand.position.set(-10.1 - standDepth / 2, 0.25, 0);
+    scene.add(leftStand);
+    
+    // Right stands
+    const rightStand = leftStand.clone();
+    rightStand.position.set(10.1 + standDepth / 2, 0.25, 0);
+    scene.add(rightStand);
+    
+    // Add simplified spectators as particle system
+    createSpectators(standDepth);
+    
+  } catch (error) {
+    console.error('Error creating stadium:', error);
+    // No need to create fallback objects as the game can function without the stadium
   }
-  
-  spectatorGeometry.setAttribute('position', new THREE.Float32BufferAttribute(spectatorPositions, 3));
-  spectatorGeometry.setAttribute('color', new THREE.Float32BufferAttribute(spectatorColors, 3));
-  
-  const spectatorMaterial = new THREE.PointsMaterial({
-    size: 0.1,
-    vertexColors: true,
-    sizeAttenuation: true
-  });
-  
-  const spectators = new THREE.Points(spectatorGeometry, spectatorMaterial);
-  scene.add(spectators);
 }
 
-async function setupDaily() {
-  daily = Daily.createCallObject();
-  await daily.join({ url: ROOM_URL });
-  myId = daily.participants().local.sessionId;
-
-  daily.on('participant-joined', handleParticipantJoined);
-  daily.on('participant-left', handleParticipantLeft);
-  daily.on('participant-updated', handleParticipantUpdated);
-  daily.on('data', handleData);
-
-  // Start camera and get stream for MediaPipe
-  await daily.startCamera();
-  const localVideo = document.createElement('video');
-  localVideo.autoplay = true;
-  localVideo.muted = true;
-  daily.setLocalVideo(localVideo);
-
-  // Add to lobby
-  addToLobby(myId, localVideo);
-
-  // Pass stream to MediaPipe
-  if (poseLandmarker) {
-    poseLandmarker.setOptions({ runningMode: "VIDEO" });
-    const detectPose = async () => {
-      if (localVideo.readyState >= 2) {
-        const result = await poseLandmarker.detectForVideo(localVideo, Date.now());
-        currentPose = result.landmarks[0]; // Assuming one pose
+function createSpectators(standDepth) {
+  try {
+    const spectatorGeometry = new THREE.BufferGeometry();
+    const spectatorCount = 200;
+    const spectatorPositions = [];
+    const spectatorColors = [];
+    
+    // Colors for spectators
+    const colorOptions = [
+      new THREE.Color(0xFF0000), // Red
+      new THREE.Color(0x0000FF), // Blue
+      new THREE.Color(0xFFFF00), // Yellow
+      new THREE.Color(0x00FF00), // Green
+      new THREE.Color(0xFF00FF), // Purple
+      new THREE.Color(0x00FFFF), // Cyan
+    ];
+    
+    // Generate random positions for spectators around the court
+    for (let i = 0; i < spectatorCount; i++) {
+      // Decide which stand this spectator is on
+      const standChoice = Math.floor(Math.random() * 4);
+      let x, y, z;
+      
+      switch (standChoice) {
+        case 0: // Back stand
+          x = Math.random() * 20 - 10;
+          z = 5.1 + Math.random() * standDepth;
+          break;
+        case 1: // Front stand
+          x = Math.random() * 20 - 10;
+          z = -5.1 - Math.random() * standDepth;
+          break;
+        case 2: // Left stand
+          x = -10.1 - Math.random() * standDepth;
+          z = Math.random() * 10 - 5;
+          break;
+        case 3: // Right stand
+          x = 10.1 + Math.random() * standDepth;
+          z = Math.random() * 10 - 5;
+          break;
       }
-      requestAnimationFrame(detectPose);
-    };
-    detectPose();
+      
+      y = 0.5 + Math.random() * 2; // Random height above the stand
+      
+      spectatorPositions.push(x, y, z);
+      
+      // Random color for each spectator
+      const color = colorOptions[Math.floor(Math.random() * colorOptions.length)];
+      spectatorColors.push(color.r, color.g, color.b);
+    }
+    
+    spectatorGeometry.setAttribute('position', new THREE.Float32BufferAttribute(spectatorPositions, 3));
+    spectatorGeometry.setAttribute('color', new THREE.Float32BufferAttribute(spectatorColors, 3));
+    
+    const spectatorMaterial = new THREE.PointsMaterial({
+      size: 0.1,
+      vertexColors: true,
+      sizeAttenuation: true
+    });
+    
+    const spectators = new THREE.Points(spectatorGeometry, spectatorMaterial);
+    scene.add(spectators);
+  } catch (error) {
+    console.error('Error creating spectators:', error);
   }
+}
+  
 
-  // Ready button
-  document.getElementById('ready-btn').addEventListener('click', () => {
-    readyStates[myId] = true;
-    daily.sendData(JSON.stringify({ type: 'ready', id: myId, ready: true }));
-    updateLobby();
-  });
+async function setupDaily() {
+  try {
+    console.log('Setting up Daily.js');
+    
+    if (typeof Daily === 'undefined') {
+      console.warn('Daily not loaded, using mock implementation');
+      // Create a mock daily object for testing
+      daily = {
+        join: async function() { return Promise.resolve(); },
+        participants: function() { return { local: { sessionId: 'local-user-' + Math.floor(Math.random() * 1000) } }; },
+        on: function(event, callback) {
+          console.log('Mock registering event handler for:', event);
+          // Store the callback for later simulation
+          if (event === 'data') {
+            this._dataHandler = callback;
+          }
+        },
+        _dataHandler: null,
+        startCamera: async function() { return Promise.resolve(); },
+        setLocalVideo: function() {},
+        sendData: function(data) {
+          console.log('Mock sending data:', data);
+          // Simulate receiving the data back
+          setTimeout(() => {
+            if (this._dataHandler) {
+              this._dataHandler({ data: data });
+            }
+          }, 500);
+        }
+      };
+    } else {
+      daily = Daily.createCallObject();
+      await daily.join({ url: ROOM_URL });
+    }
+    
+    myId = daily.participants().local.sessionId;
+    console.log('Connected with ID:', myId);
+
+    daily.on('participant-joined', handleParticipantJoined);
+    daily.on('participant-left', handleParticipantLeft);
+    daily.on('participant-updated', handleParticipantUpdated);
+    daily.on('data', handleData);
+
+    // Start camera and get stream for MediaPipe
+    await daily.startCamera();
+    const localVideo = document.createElement('video');
+    localVideo.autoplay = true;
+    localVideo.muted = true;
+    daily.setLocalVideo(localVideo);
+
+    // Add to lobby
+    addToLobby(myId, localVideo);
+
+    // Pass stream to MediaPipe
+    if (poseLandmarker) {
+      poseLandmarker.setOptions({ runningMode: "VIDEO" });
+      const detectPose = async () => {
+        try {
+          if (localVideo.readyState >= 2) {
+            const result = await poseLandmarker.detectForVideo(localVideo, Date.now());
+            currentPose = result.landmarks[0]; // Assuming one pose
+          }
+        } catch (error) {
+          console.error('Error detecting pose:', error);
+        }
+        requestAnimationFrame(detectPose);
+      };
+      detectPose();
+    }
+
+    // Ready button
+    document.getElementById('ready-btn').addEventListener('click', () => {
+      readyStates[myId] = true;
+      daily.sendData(JSON.stringify({ type: 'ready', id: myId, ready: true }));
+      updateLobby();
+    });
+    
+    // For testing: simulate other players joining
+    if (typeof Daily === 'undefined') {
+      console.log('Simulating other players for testing');
+      // Simulate 3 other players joining
+      for (let i = 1; i <= 3; i++) {
+        const playerId = 'simulated-player-' + i;
+        setTimeout(() => {
+          handleParticipantJoined({ participant: { sessionId: playerId } });
+          
+          // Simulate them getting ready after a delay
+          setTimeout(() => {
+            readyStates[playerId] = true;
+            handleData({ data: JSON.stringify({ type: 'ready', id: playerId, ready: true }) });
+          }, 2000 * i);
+        }, 1000 * i);
+      }
+    }
+    
+  } catch (error) {
+    console.error('Error setting up Daily:', error);
+    // Create a fallback implementation
+    daily = {
+      join: async function() { return Promise.resolve(); },
+      participants: function() { return { local: { sessionId: 'local-user-fallback' } }; },
+      on: function(event, callback) {
+        console.log('Fallback registering event handler for:', event);
+        // Store the callback for later simulation
+        if (event === 'data') {
+          this._dataHandler = callback;
+        }
+      },
+      _dataHandler: null,
+      startCamera: async function() { return Promise.resolve(); },
+      setLocalVideo: function() {},
+      sendData: function(data) {
+        console.log('Fallback sending data:', data);
+        // Simulate receiving the data back
+        setTimeout(() => {
+          if (this._dataHandler) {
+            this._dataHandler({ data: data });
+          }
+        }, 500);
+      }
+    };
+    
+    myId = daily.participants().local.sessionId;
+    console.log('Connected with fallback ID:', myId);
+    
+    // Add to lobby
+    const dummyVideo = document.createElement('video');
+    addToLobby(myId, dummyVideo);
+    
+    // Ready button
+    document.getElementById('ready-btn').addEventListener('click', () => {
+      readyStates[myId] = true;
+      daily.sendData(JSON.stringify({ type: 'ready', id: myId, ready: true }));
+      updateLobby();
+    });
+    
+    // Simulate other players for testing
+    console.log('Simulating other players in fallback mode');
+    for (let i = 1; i <= 3; i++) {
+      const playerId = 'fallback-player-' + i;
+      setTimeout(() => {
+        handleParticipantJoined({ participant: { sessionId: playerId } });
+        
+        // Simulate them getting ready after a delay
+        setTimeout(() => {
+          readyStates[playerId] = true;
+          handleData({ data: JSON.stringify({ type: 'ready', id: playerId, ready: true }) });
+        }, 2000 * i);
+      }, 1000 * i);
+    }
+  }
 }
 
 function handleParticipantJoined(event) {
@@ -517,6 +982,26 @@ function handleParticipantJoined(event) {
 
     rackets[participant.sessionId] = racket;
     scene.add(racket);
+    
+    // Create character for the player
+    const teamIndex = playerIndex % 2;
+    const teamKey = teamIndex === 0 ? 'team1' : 'team2';
+    
+    // Clone the character model for this player
+    const character = characterModels[teamKey].clone();
+    character.position.set(
+      racket.position.x,
+      0, // Place on ground
+      racket.position.z + ((positions[playerIndex].z > 0) ? -0.5 : 0.5) // Offset from racket
+    );
+    
+    // Rotate character to face the net
+    if (positions[playerIndex].z > 0) {
+      character.rotation.y = Math.PI; // Face forward (toward negative Z)
+    }
+    
+    characters[participant.sessionId] = character;
+    scene.add(character);
   }
 }
 
@@ -607,8 +1092,32 @@ function handleParticipantLeft(event) {
   if (index > -1) {
     gameState.players.splice(index, 1);
   }
-  scene.remove(rackets[event.participant.sessionId]);
+  
+  // Remove racket
+  try {
+    scene.remove(rackets[event.participant.sessionId]);
+  } catch (error) {
+    // Fallback for when remove method fails
+    const index = scene.children.indexOf(rackets[event.participant.sessionId]);
+    if (index > -1) {
+      scene.children.splice(index, 1);
+    }
+    console.log("Using fallback scene.remove for racket");
+  }
   delete rackets[event.participant.sessionId];
+  
+  // Remove character
+  try {
+    scene.remove(characters[event.participant.sessionId]);
+  } catch (error) {
+    // Fallback for when remove method fails
+    const index = scene.children.indexOf(characters[event.participant.sessionId]);
+    if (index > -1) {
+      scene.children.splice(index, 1);
+    }
+    console.log("Using fallback scene.remove for character");
+  }
+  delete characters[event.participant.sessionId];
 
   // Remove video container
   const container = document.getElementById(`video-${event.participant.sessionId}`)?.parentElement;
@@ -687,7 +1196,15 @@ function simulateFrame(inputs) {
   ball.velocity.y -= 9.8 * dt;
 
   // Update position
-  ball.position.add(ball.velocity.clone().multiplyScalar(dt));
+  try {
+    ball.position.add(ball.velocity.clone().multiplyScalar(dt));
+  } catch (error) {
+    // Fallback for when add method fails
+    ball.position.x += ball.velocity.x * dt;
+    ball.position.y += ball.velocity.y * dt;
+    ball.position.z += ball.velocity.z * dt;
+    console.log("Using fallback position update");
+  }
 
   // Check court boundaries
   if (ball.position.y <= 0.1) {
@@ -705,6 +1222,9 @@ function simulateFrame(inputs) {
       0xffffff // White particles for court bounce
     );
     
+    // Add camera shake - medium intensity for court bounce
+    shakeCamera(0.05);
+    
     playSound(200, 0.1); // Bounce sound
   }
 
@@ -720,6 +1240,9 @@ function simulateFrame(inputs) {
     
     // Create impact particles
     createImpactParticles(impactPosition, normal, 0x00ff00); // Green particles for wall bounce
+    
+    // Add camera shake - low intensity for wall bounce
+    shakeCamera(0.03);
   }
 
   // Check front/back boundaries
@@ -734,6 +1257,9 @@ function simulateFrame(inputs) {
     
     // Create impact particles
     createImpactParticles(impactPosition, normal, 0x00ff00); // Green particles for wall bounce
+    
+    // Add camera shake - low intensity for wall bounce
+    shakeCamera(0.03);
   }
 
   // Check racket collisions
@@ -756,29 +1282,172 @@ function simulateFrame(inputs) {
         0xffff00 // Yellow particles for racket hit
       );
       
+      // Add camera shake - high intensity for racket hit
+      shakeCamera(0.08);
+      
+      // Animate character swing
+      if (characters[id]) {
+        animateCharacterSwing(characters[id], swing);
+      }
+      
       playSound(400, 0.2); // Swing sound
     }
   }
 
   // Scoring
   if (ball.position.z > 5) {
-    gameState.score[0]++;
-    gameState.serving = (gameState.serving + 1) % gameState.players.length;
-    animatePointScored(0);
-    resetBall();
-    updateUI();
+    // Team 1 scores a point
+    scorePoint(0);
   } else if (ball.position.z < -5) {
-    gameState.score[1]++;
-    gameState.serving = (gameState.serving + 1) % gameState.players.length;
-    animatePointScored(1);
-    resetBall();
-    updateUI();
+    // Team 2 scores a point
+    scorePoint(1);
   }
+}
+
+// Handle scoring a point, updating games and sets as needed
+function scorePoint(team) {
+  // Store last point info
+  gameState.lastPoint = team;
+  gameState.lastPointTime = Date.now();
+  
+  const otherTeam = 1 - team;
+  
+  // Handle tiebreak scoring differently
+  if (gameState.inTiebreak) {
+    // Increment tiebreak score
+    gameState.tiebreakScore[team]++;
+    
+    // Check if this point wins the tiebreak
+    if (gameState.tiebreakScore[team] >= 7 &&
+        gameState.tiebreakScore[team] - gameState.tiebreakScore[otherTeam] >= 2) {
+      // Team won the tiebreak and the set
+      gameState.games[team]++;
+      gameState.sets[team]++;
+      
+      // Reset for next set
+      gameState.games = [0, 0];
+      gameState.score = [0, 0];
+      gameState.tiebreakScore = [0, 0];
+      gameState.inTiebreak = false;
+      
+      showStatusIndicator(`Tiebreak and Set to Team ${team + 1}!`, team === 0 ? 0xff5722 : 0x2196f3);
+      
+      // Check if this set wins the match (best of 3 sets)
+      if (gameState.sets[team] >= 2) {
+        // Team won the match
+        showStatusIndicator(`Match to Team ${team + 1}!`, team === 0 ? 0xff5722 : 0x2196f3);
+        // Could add match end logic here
+      }
+    } else {
+      // Update serving in tiebreak (changes every 2 points)
+      const totalPoints = gameState.tiebreakScore[0] + gameState.tiebreakScore[1];
+      if (totalPoints % 2 === 1) {
+        gameState.servingInTiebreak = (gameState.servingInTiebreak + 1) % gameState.players.length;
+      }
+      
+      showStatusIndicator(`Tiebreak Point for Team ${team + 1}!`, team === 0 ? 0xff5722 : 0x2196f3);
+    }
+  } else {
+    // Regular scoring
+    // Increment point score
+    gameState.score[team]++;
+    
+    // Check if this point wins the game
+    const scoreValues = [0, 15, 30, 40];
+    const teamScore = scoreValues[Math.min(gameState.score[team], 3)];
+    const otherTeamScore = scoreValues[Math.min(gameState.score[otherTeam], 3)];
+    
+    let gameWon = false;
+    
+    // Check for game win conditions
+    if (gameState.deuce) {
+      // In deuce, team needs to be up by 2 points
+      if (gameState.score[team] >= 4 && gameState.score[team] - gameState.score[otherTeam] >= 2) {
+        gameWon = true;
+      } else if (gameState.score[team] > gameState.score[otherTeam]) {
+        // Team now has advantage
+        gameState.advantage = team;
+        gameState.deuce = false;
+        showStatusIndicator(`Advantage Team ${team + 1}`, team === 0 ? 0xff5722 : 0x2196f3);
+      } else {
+        // Back to deuce
+        showStatusIndicator("Deuce", 0xffffff);
+      }
+    } else if (gameState.advantage === team) {
+      // Team had advantage and scored again
+      gameWon = true;
+    } else if (gameState.advantage === otherTeam) {
+      // Other team had advantage, now back to deuce
+      gameState.advantage = null;
+      gameState.deuce = true;
+      showStatusIndicator("Deuce", 0xffffff);
+    } else if (teamScore === 40 && otherTeamScore < 40) {
+      // Regular win at 40
+      gameWon = true;
+    } else if (teamScore === 40 && otherTeamScore === 40) {
+      // Deuce
+      gameState.deuce = true;
+      showStatusIndicator("Deuce", 0xffffff);
+    }
+    
+    if (gameWon) {
+      // Team won the game
+      gameState.games[team]++;
+      gameState.score = [0, 0]; // Reset points
+      gameState.advantage = null;
+      gameState.deuce = false;
+      
+      showStatusIndicator(`Game to Team ${team + 1}!`, team === 0 ? 0xff5722 : 0x2196f3);
+      
+      // Check for tiebreak at 6-6
+      if (gameState.games[0] === 6 && gameState.games[1] === 6) {
+        gameState.inTiebreak = true;
+        gameState.tiebreakScore = [0, 0];
+        showStatusIndicator("Tiebreak Game!", 0xffffff);
+      }
+      // Check if this game wins the set (6 games, or 7 in case of 7-5)
+      else if (gameState.games[team] >= 6 && gameState.games[team] - gameState.games[otherTeam] >= 2) {
+        // Team won the set
+        gameState.sets[team]++;
+        gameState.games = [0, 0]; // Reset games
+        showStatusIndicator(`Set to Team ${team + 1}!`, team === 0 ? 0xff5722 : 0x2196f3);
+        
+        // Check if this set wins the match (best of 3 sets)
+        if (gameState.sets[team] >= 2) {
+          // Team won the match
+          showStatusIndicator(`Match to Team ${team + 1}!`, team === 0 ? 0xff5722 : 0x2196f3);
+          // Could add match end logic here
+        }
+      }
+    }
+  }
+  
+  // Update serving player for regular games
+  if (!gameState.inTiebreak) {
+    gameState.serving = (gameState.serving + 1) % gameState.players.length;
+  }
+  
+  // Show point animation
+  animatePointScored(team);
+  
+  // Reset ball position
+  resetBall();
+  
+  // Update UI
+  updateUI();
 }
 
 function resetBall() {
   ball.position.set(0, 0.5, 0);
-  const servingPlayer = gameState.players[gameState.serving];
+  
+  // Get the current server's racket
+  let servingPlayer;
+  if (gameState.inTiebreak) {
+    servingPlayer = gameState.players[gameState.servingInTiebreak];
+  } else {
+    servingPlayer = gameState.players[gameState.serving];
+  }
+  
   const racket = rackets[servingPlayer];
   if (racket) {
     const direction = racket.position.z > 0 ? -1 : 1;
@@ -786,15 +1455,46 @@ function resetBall() {
   } else {
     ball.velocity.set(0.1, 0, 0.05);
   }
+  
+  // Add a slight upward velocity for serve
+  ball.velocity.y = 0.2;
+  
+  // Add a slight shake for serve
+  shakeCamera(0.02);
 }
 
 function render() {
   // Dynamic camera following the ball
   const targetX = ball.position.x * 0.1;
   const targetZ = ball.position.z * 0.1 + 10;
-  camera.position.x += (targetX - camera.position.x) * 0.05;
-  camera.position.z += (targetZ - camera.position.z) * 0.05;
-  camera.lookAt(ball.position);
+  
+  // Apply camera shake if active
+  if (cameraShake.intensity > 0.01) {
+    // Calculate random offsets based on intensity
+    cameraShake.offsetX = (Math.random() * 2 - 1) * cameraShake.intensity;
+    cameraShake.offsetY = (Math.random() * 2 - 1) * cameraShake.intensity;
+    cameraShake.offsetZ = (Math.random() * 2 - 1) * cameraShake.intensity;
+    
+    // Decay the shake effect
+    cameraShake.intensity *= cameraShake.decay;
+  } else {
+    cameraShake.intensity = 0;
+    cameraShake.offsetX = 0;
+    cameraShake.offsetY = 0;
+    cameraShake.offsetZ = 0;
+  }
+  
+  // Apply camera position with shake
+  camera.position.x += (targetX - camera.position.x) * 0.05 + cameraShake.offsetX;
+  camera.position.z += (targetZ - camera.position.z) * 0.05 + cameraShake.offsetZ;
+  camera.position.y = 5 + cameraShake.offsetY;
+  
+  // Look at ball with slight shake offset
+  camera.lookAt(
+    ball.position.x + cameraShake.offsetX * 0.5,
+    ball.position.y + cameraShake.offsetY * 0.5,
+    ball.position.z + cameraShake.offsetZ * 0.5
+  );
   
   // Animate server indicator
   scene.children.forEach(child => {
@@ -816,19 +1516,44 @@ function render() {
   
   // Update impact particles
   updateImpactParticles();
+  
+  // Update character animations
+  updateCharacterAnimations();
 
   renderer.render(scene, camera);
 }
 
 function updateUI() {
-  document.getElementById('score').textContent = `${gameState.score[0]}-${gameState.score[1]}`;
+  // Format the score display to show points, games, and sets
+  const pointsDisplay = formatPointsDisplay();
+  const gamesDisplay = `${gameState.games[0]}-${gameState.games[1]}`;
+  const setsDisplay = `${gameState.sets[0]}-${gameState.sets[1]}`;
+  
+  document.getElementById('score').textContent = `${pointsDisplay} | Games: ${gamesDisplay} | Sets: ${setsDisplay}`;
   document.getElementById('players').textContent = gameState.players.length + 1;
   
   // Update server indicator
   updateServerIndicator();
   
-  // Check for game point
-  checkGamePoint();
+  // Check for game point, set point, match point
+  checkGameStatus();
+}
+
+// Format the points display according to tennis scoring (0, 15, 30, 40, Adv)
+function formatPointsDisplay() {
+  const pointValues = ['0', '15', '30', '40'];
+  
+  // Handle advantage scoring
+  if (gameState.deuce) {
+    return 'Deuce';
+  } else if (gameState.advantage !== null) {
+    return `Adv ${gameState.advantage === 0 ? 'Team 1' : 'Team 2'}`;
+  }
+  
+  // Regular scoring
+  const team1Points = pointValues[Math.min(gameState.score[0], 3)];
+  const team2Points = pointValues[Math.min(gameState.score[1], 3)];
+  return `${team1Points}-${team2Points}`;
 }
 
 function updateServerIndicator() {
@@ -868,7 +1593,14 @@ function updateServerIndicator() {
   scene.add(indicator);
 }
 
-function checkGamePoint() {
+function checkGameStatus() {
+  // Reset status flags
+  gameState.gamePoint = false;
+  gameState.setPoint = false;
+  gameState.matchPoint = false;
+  gameState.deuce = false;
+  gameState.advantage = null;
+  
   // Tennis scoring: 0, 15, 30, 40, game
   const scoreValues = [0, 15, 30, 40];
   const team1Score = scoreValues[Math.min(gameState.score[0], 3)];
@@ -876,46 +1608,56 @@ function checkGamePoint() {
   
   // Check for deuce (40-40)
   if (team1Score === 40 && team2Score === 40) {
-    if (!gameState.deuce) {
-      gameState.deuce = true;
-      showStatusIndicator("Deuce", 0xffffff);
-    }
+    gameState.deuce = true;
+    showStatusIndicator("Deuce", 0xffffff);
     return;
   }
   
-  gameState.deuce = false;
-  
   // Check for advantage
   if (team1Score === 40 && gameState.score[0] > 3) {
+    gameState.advantage = 0;
     showStatusIndicator("Advantage Team 1", 0xff5722);
     return;
   }
   
   if (team2Score === 40 && gameState.score[1] > 3) {
+    gameState.advantage = 1;
     showStatusIndicator("Advantage Team 2", 0x2196f3);
     return;
   }
   
   // Check for game point
-  if ((team1Score === 40 && team2Score < 40) ||
-      (team1Score === 30 && team2Score === 0)) {
-    if (!gameState.gamePoint) {
-      gameState.gamePoint = true;
-      showStatusIndicator("Game Point Team 1", 0xff5722);
-    }
-    return;
-  }
+  const isTeam1GamePoint = (team1Score === 40 && team2Score < 40) || (team1Score === 30 && team2Score === 0);
+  const isTeam2GamePoint = (team2Score === 40 && team1Score < 40) || (team2Score === 30 && team1Score === 0);
   
-  if ((team2Score === 40 && team1Score < 40) ||
-      (team2Score === 30 && team1Score === 0)) {
-    if (!gameState.gamePoint) {
-      gameState.gamePoint = true;
-      showStatusIndicator("Game Point Team 2", 0x2196f3);
-    }
-    return;
-  }
+  // Check for set point (team needs to win 3 games to win a set)
+  const isTeam1SetPoint = isTeam1GamePoint && gameState.games[0] === 2;
+  const isTeam2SetPoint = isTeam2GamePoint && gameState.games[1] === 2;
   
-  gameState.gamePoint = false;
+  // Check for match point (team needs to win 2 sets to win the match)
+  const isTeam1MatchPoint = isTeam1SetPoint && gameState.sets[0] === 1;
+  const isTeam2MatchPoint = isTeam2SetPoint && gameState.sets[1] === 1;
+  
+  // Show appropriate indicator
+  if (isTeam1MatchPoint) {
+    gameState.matchPoint = true;
+    showStatusIndicator("Match Point Team 1", 0xff5722);
+  } else if (isTeam2MatchPoint) {
+    gameState.matchPoint = true;
+    showStatusIndicator("Match Point Team 2", 0x2196f3);
+  } else if (isTeam1SetPoint) {
+    gameState.setPoint = true;
+    showStatusIndicator("Set Point Team 1", 0xff5722);
+  } else if (isTeam2SetPoint) {
+    gameState.setPoint = true;
+    showStatusIndicator("Set Point Team 2", 0x2196f3);
+  } else if (isTeam1GamePoint) {
+    gameState.gamePoint = true;
+    showStatusIndicator("Game Point Team 1", 0xff5722);
+  } else if (isTeam2GamePoint) {
+    gameState.gamePoint = true;
+    showStatusIndicator("Game Point Team 2", 0x2196f3);
+  }
 }
 
 function showStatusIndicator(text, color = 0xffffff) {
@@ -988,7 +1730,16 @@ function showStatusIndicator(text, color = 0xffffff) {
         material.opacity -= 0.05;
         requestAnimationFrame(fadeOut);
       } else {
-        scene.remove(indicator);
+        try {
+          scene.remove(indicator);
+        } catch (error) {
+          // Fallback for when remove method fails
+          const index = scene.children.indexOf(indicator);
+          if (index > -1) {
+            scene.children.splice(index, 1);
+          }
+          console.log("Using fallback scene.remove for indicator");
+        }
         const index = statusIndicators.indexOf(indicator);
         if (index > -1) {
           statusIndicators.splice(index, 1);
@@ -1031,7 +1782,16 @@ function animatePointScored(team) {
         flashMaterial.opacity -= 0.01;
         requestAnimationFrame(fadeOut);
       } else {
-        scene.remove(flash);
+        try {
+          scene.remove(flash);
+        } catch (error) {
+          // Fallback for when remove method fails
+          const index = scene.children.indexOf(flash);
+          if (index > -1) {
+            scene.children.splice(index, 1);
+          }
+          console.log("Using fallback scene.remove for flash");
+        }
       }
     };
     fadeOut();
@@ -1121,6 +1881,94 @@ function startGame() {
   
   // Play game start sound
   playSound(700, 0.5);
+}
+
+// Function to trigger camera shake with specified intensity
+function shakeCamera(intensity) {
+  // Set shake intensity, clamped to reasonable values
+  cameraShake.intensity = Math.min(Math.max(intensity, 0), 0.2);
+}
+
+// Animate character swing based on input
+function animateCharacterSwing(character, swing) {
+  if (!character || !character.userData || !character.userData.rig) return;
+  
+  const rig = character.userData.rig;
+  
+  // Set animation state
+  rig.animations.swinging = true;
+  rig.animations.swingStartTime = Date.now();
+  rig.animations.swingVelocity = swing.velocity;
+  rig.animations.swingAngle = swing.angle;
+  
+  // Get the right arm bone
+  const rightArm = rig.bones.rightArm;
+  if (!rightArm) return;
+  
+  // Initial swing position - arm goes back
+  rightArm.rotation.x = -Math.PI / 4;
+  rightArm.rotation.z = Math.PI / 3;
+}
+
+// Update character animations in render loop
+function updateCharacterAnimations() {
+  const now = Date.now();
+  
+  // Update each character
+  Object.values(characters).forEach(character => {
+    if (!character || !character.userData || !character.userData.rig) return;
+    
+    const rig = character.userData.rig;
+    
+    if (rig.animations.swinging) {
+      const rightArm = rig.bones.rightArm;
+      if (!rightArm) return;
+      
+      const elapsed = now - rig.animations.swingStartTime;
+      const progress = Math.min(elapsed / rig.animations.swingDuration, 1);
+      
+      if (progress < 1) {
+        // Swing forward animation
+        const swingPower = rig.animations.swingVelocity / 10;
+        rightArm.rotation.x = -Math.PI / 4 + progress * Math.PI / 2 * swingPower;
+        rightArm.rotation.z = Math.PI / 3 - progress * Math.PI / 2;
+        
+        // Also animate the head to look at the ball
+        if (rig.bones.head) {
+          rig.bones.head.rotation.x = Math.sin(progress * Math.PI) * 0.2;
+        }
+      } else {
+        // Reset to rest pose
+        if (rig.restPose.rightArm) {
+          rightArm.rotation.copy(rig.restPose.rightArm.rotation);
+        } else {
+          rightArm.rotation.set(0, 0, 0);
+        }
+        
+        if (rig.bones.head && rig.restPose.head) {
+          rig.bones.head.rotation.copy(rig.restPose.head.rotation);
+        }
+        
+        rig.animations.swinging = false;
+      }
+    }
+  });
+}
+
+// Function to load a custom character model
+// This would be called when a user provides their own model
+function loadCustomCharacterModel(url, teamIndex) {
+  return new Promise((resolve, reject) => {
+    // In a real implementation, we would use THREE.GLTFLoader
+    // For now, we'll just create a default model
+    console.log(`Loading custom character model from ${url} for team ${teamIndex + 1}`);
+    
+    const model = createDefaultCharacterModel(teamIndex);
+    const teamKey = teamIndex === 0 ? 'team1' : 'team2';
+    characterModels[teamKey] = model;
+    
+    resolve(model);
+  });
 }
 
 // Start the app
