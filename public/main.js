@@ -1328,8 +1328,17 @@ async function setupDaily() {
       console.error('Error setting local video:', error);
     }
 
-    // Create the local player's video element
-    createParticipantVideoElement(myId);
+    // Create the local player's video element and add to lobby
+    if (localVideo && localVideo.srcObject) {
+      // Clone the video element for lobby
+      const lobbyVideo = localVideo.cloneNode();
+      lobbyVideo.id = `lobby-video-${myId}`;
+      lobbyVideo.className = 'lobby-video';
+      lobbyVideo.srcObject = localVideo.srcObject;
+      addToLobby(myId, lobbyVideo);
+    } else {
+      createParticipantVideoElement(myId);
+    }
 
     // Pass stream to MediaPipe
     if (poseLandmarker) {
@@ -1350,23 +1359,8 @@ async function setupDaily() {
       detectPose();
     }
 
-    // Ready button
-    const readyBtn = document.getElementById('ready-btn');
-    if (readyBtn) {
-      readyBtn.addEventListener('click', () => {
-        const currentReady = gameManager.readyStates[myId] || false;
-        const newReady = !currentReady;
-        console.log('Ready button clicked. Current:', currentReady, 'New:', newReady);
-        
-        gameManager.setReady(myId, newReady);
-        
-        // Update button text
-        readyBtn.textContent = newReady ? 'Not Ready' : 'Ready';
-        readyBtn.style.backgroundColor = newReady ? '#ff4444' : '#44ff44';
-      });
-    } else {
-      console.error('Ready button not found in DOM');
-    }
+    // Ready button setup
+    setupReadyButton();
     
     // Add game mode selector
     const gameModeSelector = document.createElement('div');
@@ -1381,16 +1375,40 @@ async function setupDaily() {
     `;
     
     const lobby = document.getElementById('lobby');
-    lobby.insertBefore(gameModeSelector, document.getElementById('ready-btn'));
+    const readyBtn = document.getElementById('ready-btn');
+    if (lobby && readyBtn) {
+      lobby.insertBefore(gameModeSelector, readyBtn);
+    } else {
+      console.warn('Could not find lobby or ready-btn elements');
+      // Append to lobby if ready button not found
+      if (lobby) {
+        lobby.appendChild(gameModeSelector);
+      }
+    }
     
     // Add event listeners for game mode buttons
-    document.getElementById('singles-btn').addEventListener('click', () => {
-      gameManager.setMode('singles');
-    });
-    
-    document.getElementById('doubles-btn').addEventListener('click', () => {
-      gameManager.setMode('doubles');
-    });
+    setTimeout(() => {
+      const singlesBtn = document.getElementById('singles-btn');
+      const doublesBtn = document.getElementById('doubles-btn');
+      
+      if (singlesBtn) {
+        singlesBtn.addEventListener('click', () => {
+          gameManager.setMode('singles');
+          // Update button states
+          singlesBtn.classList.add('active');
+          if (doublesBtn) doublesBtn.classList.remove('active');
+        });
+      }
+      
+      if (doublesBtn) {
+        doublesBtn.addEventListener('click', () => {
+          gameManager.setMode('doubles');
+          // Update button states
+          doublesBtn.classList.add('active');
+          if (singlesBtn) singlesBtn.classList.remove('active');
+        });
+      }
+    }, 100); // Small delay to ensure elements are in DOM
     
     // For testing: simulate other players joining
     if (typeof Daily === 'undefined') {
@@ -1446,10 +1464,8 @@ async function setupDaily() {
     dummyVideo.id = 'local-video-fallback';
     addToLobby(myId, dummyVideo);
     
-    // Ready button
-    document.getElementById('ready-btn').addEventListener('click', () => {
-      gameManager.setReady(myId, true);
-    });
+    // Ready button setup for fallback mode
+    setupReadyButton();
     
     // Simulate other players for testing
     console.log('Simulating other players in fallback mode');
@@ -1648,15 +1664,20 @@ function handleData(event) {
   try {
     const data = JSON.parse(event.data);
     const fromId = event.fromId;
+    console.log('Received data:', data.type, 'from:', fromId);
 
     switch (data.type) {
       case 'request-state':
         if (isHost) {
+          console.log('Host sending state in response to request');
           gameManager.broadcast();
         }
         break;
       case 'game-state':
-        gameManager.setState(data);
+        if (!isHost) {
+          console.log('Received game state update:', data);
+          gameManager.setState(data);
+        }
         break;
       case 'ready':
         if (isHost) {
@@ -1664,6 +1685,7 @@ function handleData(event) {
         }
         break;
       case 'start':
+        console.log('Received start game signal');
         startGame();
         break;
       case 'mode':
@@ -1677,11 +1699,49 @@ function handleData(event) {
         }
         inputBuffer[data.t][fromId] = data.swing;
         break;
+      case 'hello':
+        console.log('Received hello from:', data.id);
+        // Add the player if they're not already added
+        if (gameManager.gameState.players.indexOf(data.id) === -1) {
+          addPlayer(data.id);
+        }
+        break;
       default:
+        console.log('Unknown data type:', data.type);
         break;
     }
   } catch (error) {
     console.error('Error handling data:', error, event.data);
+  }
+}
+
+// Setup ready button functionality
+function setupReadyButton() {
+  const readyBtn = document.getElementById('ready-btn');
+  if (readyBtn) {
+    // Remove any existing event listeners
+    readyBtn.replaceWith(readyBtn.cloneNode(true));
+    const newReadyBtn = document.getElementById('ready-btn');
+    
+    newReadyBtn.addEventListener('click', () => {
+      const currentReady = gameManager.readyStates[myId] || false;
+      const newReady = !currentReady;
+      console.log('Ready button clicked. Current:', currentReady, 'New:', newReady);
+      
+      gameManager.setReady(myId, newReady);
+      
+      // Send ready state to others if we're not the host
+      if (!isHost && daily && typeof daily.sendData === 'function') {
+        daily.sendData(JSON.stringify({
+          type: 'ready',
+          id: myId,
+          ready: newReady
+        }));
+      }
+    });
+    console.log('Ready button event listener attached');
+  } else {
+    console.error('Ready button not found in DOM');
   }
 }
 
@@ -2495,10 +2555,22 @@ function updateLobby() {
   }
   
   // Update ready button and status
-  document.getElementById('ready-btn').disabled = !allJoined;
-  document.getElementById('ready-status').textContent = allJoined ?
-    (allReady ? 'All ready! Starting game...' : 'All players joined! Click ready.') :
-    `Waiting for players... (${totalPlayers}/${requiredPlayers})`;
+  const readyBtn = document.getElementById('ready-btn');
+  const readyStatus = document.getElementById('ready-status');
+  
+  if (readyBtn) {
+    readyBtn.disabled = !allJoined;
+    // Update button text based on current player's ready state
+    const myReadyState = gameManager.readyStates[myId] || false;
+    readyBtn.textContent = myReadyState ? 'Not Ready' : 'Ready';
+    readyBtn.style.backgroundColor = myReadyState ? '#ff4444' : '';
+  }
+  
+  if (readyStatus) {
+    readyStatus.textContent = allJoined ?
+      (allReady ? 'All ready! Starting game...' : 'All players joined! Click ready.') :
+      `Waiting for players... (${totalPlayers}/${requiredPlayers})`;
+  }
   
   // Update player slots
   const team1 = document.getElementById('team1');
@@ -2776,13 +2848,16 @@ init();
 
 function createParticipantVideoElement(participantId) {
   if (document.getElementById(`video-container-${participantId}`)) {
+    console.log('Video container already exists for:', participantId);
     return;
   }
+
+  console.log('Creating video element for participant:', participantId);
 
   const videoElement = document.createElement('video');
   videoElement.id = `video-${participantId}`;
   videoElement.autoplay = true;
-  videoElement.muted = participantId === myId;
+  videoElement.muted = participantId !== myId; // Mute others, not self
   videoElement.playsInline = true;
   videoElement.className = 'lobby-video';
 
@@ -2796,9 +2871,16 @@ function createParticipantVideoElement(participantId) {
     console.error(`Video error for ${participantId}:`, e);
   });
 
-  if (participantId !== myId) {
-    daily.setParticipantVideo(participantId, videoElement);
+  // Set up video stream
+  if (participantId !== myId && daily && typeof daily.setParticipantVideo === 'function') {
+    try {
+      daily.setParticipantVideo(participantId, videoElement);
+      console.log('Set participant video for:', participantId);
+    } catch (error) {
+      console.error('Error setting participant video:', error);
+    }
   }
 
+  // Add to lobby
   addToLobby(participantId, videoElement);
 }
