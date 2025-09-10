@@ -305,75 +305,89 @@
     <div>Players: <span id="players">Connecting...</span></div>
   </div>
   <div id="videos" style="display: none;"></div>
-  <!-- Load Three.js -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r158/three.min.js"></script>
-  
-  <!-- Load Daily.js -->
-  <script src="https://cdn.jsdelivr.net/npm/@daily-co/daily-js@0.58.0/dist/daily-js.min.js"></script>
-  
-  <!-- Load MediaPipe -->
-  <script type="module">
-    // Import MediaPipe as a module
-    import * as TasksVision from 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/vision_bundle.js';
-    window.TasksVision = TasksVision;
-  </script>
-  
-  <!-- Load our application code -->
+  <!-- Load libraries with proper error handling and fallbacks -->
   <script>
-    // Check if libraries are loaded
-    window.addEventListener('DOMContentLoaded', (event) => {
-      console.log('DOM fully loaded');
+    let librariesLoaded = 0;
+    const totalLibraries = 3;
+    
+    function checkAllLibrariesLoaded() {
+      librariesLoaded++;
+      console.log(`Libraries loaded: ${librariesLoaded}/${totalLibraries}`);
+      
+      if (librariesLoaded >= totalLibraries) {
+        console.log('All libraries loaded, loading main application');
+        setTimeout(loadMainScript, 500);
+      }
+    }
+    
+    function loadMainScript() {
+      console.log('Final library check:');
       console.log('THREE available:', typeof THREE !== 'undefined');
       console.log('Daily available:', typeof Daily !== 'undefined');
       console.log('TasksVision available:', typeof window.TasksVision !== 'undefined');
       
-      // Define global variables if libraries are not loaded
-      if (typeof Daily === 'undefined') {
-        console.warn('Daily not loaded, creating mock object');
-        window.Daily = {
-          createCallObject: function() {
-            return {
-              join: async function() { return Promise.resolve(); },
-              participants: function() { return { local: { sessionId: 'local-user' } }; },
-              on: function() {},
-              startCamera: async function() { return Promise.resolve(); },
-              setLocalVideo: function() {},
-              sendData: function() {}
-            };
-          }
-        };
-      }
-      
-      if (typeof TasksVision === 'undefined') {
-        console.warn('TasksVision not loaded, creating mock object');
-        window.TasksVision = {
-          FilesetResolver: {
-            forVisionTasks: async function() { return Promise.resolve({}); }
-          },
-          PoseLandmarker: {
-            createFromOptions: async function() {
-              return Promise.resolve({
-                setOptions: function() {},
-                detectForVideo: async function() {
-                  return { landmarks: [] };
-                }
-              });
-            }
-          }
-        };
-      }
-    });
-    // Load main.js after DOM and libraries are ready
-    function loadMainScript() {
       const script = document.createElement('script');
       script.src = './main.js';
       script.type = 'text/javascript';
-      script.defer = true;
+      script.onload = () => console.log('Main script loaded successfully');
+      script.onerror = (e) => console.error('Error loading main script:', e);
       document.body.appendChild(script);
     }
-    
-    // Wait a moment to ensure libraries are loaded
-    setTimeout(loadMainScript, 1000);
+  </script>
+
+  <!-- Load Three.js with fallback -->
+  <script
+    src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r158/three.min.js"
+    onload="console.log('THREE.js loaded successfully'); checkAllLibrariesLoaded();"
+    onerror="console.error('Failed to load THREE.js from CDN, trying alternative');
+             const script = document.createElement('script');
+             script.src = 'https://unpkg.com/three@0.158.0/build/three.min.js';
+             script.onload = () => { console.log('THREE.js loaded from alternative CDN'); checkAllLibrariesLoaded(); };
+             script.onerror = () => { console.error('THREE.js failed to load from all sources'); checkAllLibrariesLoaded(); };
+             document.head.appendChild(script);">
+  </script>
+  
+  <!-- Load Daily.js with fallback -->
+  <script
+    src="https://unpkg.com/@daily-co/daily-js@latest/dist/daily-js.min.js"
+    onload="console.log('Daily.js loaded successfully'); checkAllLibrariesLoaded();"
+    onerror="console.error('Failed to load Daily.js from CDN, trying alternative');
+             const script = document.createElement('script');
+             script.src = 'https://cdn.jsdelivr.net/npm/@daily-co/daily-js@0.58.0/dist/daily-js.min.js';
+             script.onload = () => { console.log('Daily.js loaded from alternative CDN'); checkAllLibrariesLoaded(); };
+             script.onerror = () => { console.error('Daily.js failed to load from all sources'); checkAllLibrariesLoaded(); };
+             document.head.appendChild(script);">
+  </script>
+  
+  <!-- Load MediaPipe -->
+  <script type="module">
+    try {
+      // Import MediaPipe as a module
+      const TasksVision = await import('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/vision_bundle.js');
+      window.TasksVision = TasksVision;
+      console.log('MediaPipe TasksVision loaded successfully');
+      checkAllLibrariesLoaded();
+    } catch (error) {
+      console.error('Error loading MediaPipe:', error);
+      // Create fallback
+      window.TasksVision = {
+        FilesetResolver: {
+          forVisionTasks: async function() { return Promise.resolve({}); }
+        },
+        PoseLandmarker: {
+          createFromOptions: async function() {
+            return Promise.resolve({
+              setOptions: function() {},
+              detectForVideo: async function() {
+                return { landmarks: [] };
+              }
+            });
+          }
+        }
+      };
+      console.log('MediaPipe fallback created');
+      checkAllLibrariesLoaded();
+    }
   </script>
 </body>
 </html>

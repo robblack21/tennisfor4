@@ -7,95 +7,20 @@ console.log("THREE available:", typeof THREE !== 'undefined');
 console.log("Daily available:", typeof Daily !== 'undefined');
 console.log("TasksVision available:", typeof TasksVision !== 'undefined');
 
-// Create mock objects if libraries are not loaded
+// Validate libraries are loaded
 if (typeof THREE === 'undefined') {
-  console.warn('THREE.js not loaded, creating mock object');
-  window.THREE = {
-    Scene: function() {
-      return {
-        add: function() {},
-        remove: function() {},
-        background: { set: function() {} },
-        children: []
-      };
-    },
-    PerspectiveCamera: function() { return { position: { set: function() {} }, lookAt: function() {} }; },
-    WebGLRenderer: function() { return { setSize: function() {}, render: function() {}, domElement: document.createElement('div'), shadowMap: { enabled: false } }; },
-    Color: function() { return {}; },
-    AmbientLight: function() { return {}; },
-    DirectionalLight: function() { return { position: { set: function() {} }, shadow: { mapSize: { width: 0, height: 0 } } }; },
-    PlaneGeometry: function() { return {}; },
-    BoxGeometry: function() { return {}; }, // Added BoxGeometry constructor
-    SphereGeometry: function() { return {}; },
-    TorusGeometry: function() { return {}; },
-    CircleGeometry: function() { return {}; },
-    CylinderGeometry: function() { return {}; },
-    BufferGeometry: function() { return { setAttribute: function() {} }; },
-    MeshLambertMaterial: function() { return {}; },
-    MeshBasicMaterial: function() { return {}; },
-    PointsMaterial: function() { return {}; },
-    LineBasicMaterial: function() { return {}; },
-    Mesh: function() { return { position: { set: function() {}, copy: function() { return {}; } }, rotation: { x: 0, y: 0, z: 0 }, userData: {}, clone: function() { return this; } }; },
-    Points: function() { return { geometry: { attributes: { position: { array: [], needsUpdate: false } } }, material: {}, userData: {} }; },
-    LineSegments: function() { return {}; },
-    Group: function() { return { add: function() {}, position: { set: function() {}, copy: function() { return {}; } }, rotation: { x: 0, y: 0 } }; },
-    Vector3: function() {
-      return {
-        x: 0, y: 0, z: 0,
-        set: function(x, y, z) {
-          this.x = x || 0;
-          this.y = y || 0;
-          this.z = z || 0;
-          return this;
-        },
-        add: function(v) {
-          if (v) {
-            this.x += v.x || 0;
-            this.y += v.y || 0;
-            this.z += v.z || 0;
-          }
-          return this;
-        },
-        sub: function(v) {
-          if (v) {
-            this.x -= v.x || 0;
-            this.y -= v.y || 0;
-            this.z -= v.z || 0;
-          }
-          return this;
-        },
-        clone: function() {
-          const clone = new THREE.Vector3();
-          clone.x = this.x;
-          clone.y = this.y;
-          clone.z = this.z;
-          return clone;
-        },
-        normalize: function() {
-          return this;
-        },
-        multiplyScalar: function(scalar) {
-          this.x *= scalar || 0;
-          this.y *= scalar || 0;
-          this.z *= scalar || 0;
-          return this;
-        },
-        dot: function() {
-          return 0;
-        },
-        length: function() {
-          return 0;
-        }
-      };
-    },
-    CanvasTexture: function() { return { wrapS: 0, wrapT: 0 }; },
-    Float32BufferAttribute: function() { return {}; },
-    BufferAttribute: function() { return {}; },
-    RepeatWrapping: 0,
-    DoubleSide: 0,
-    AdditiveBlending: 0
-  };
+  console.error('THREE.js failed to load! The 3D scene will not work.');
+  throw new Error('THREE.js is required but not loaded');
 }
+
+if (typeof Daily === 'undefined') {
+  console.error('Daily.js failed to load! Video calls will not work.');
+  throw new Error('Daily.js is required but not loaded');
+}
+
+console.log('✅ THREE.js loaded successfully');
+console.log('✅ Daily.js loaded successfully');
+console.log('✅ TasksVision status:', typeof window.TasksVision !== 'undefined' ? 'loaded' : 'fallback mode');
 
 // Game constants
 const ROOM_URL = 'https://vcroom.daily.co/tennisfor4';
@@ -1045,38 +970,8 @@ async function setupDaily() {
   try {
     console.log('Setting up Daily.js');
     
-    if (typeof Daily === 'undefined') {
-      console.warn('Daily not loaded, using mock implementation');
-      // Create a mock daily object for testing
-      daily = {
-        join: async function() { return Promise.resolve(); },
-        participants: function() { return { local: { sessionId: 'local-user-' + Math.floor(Math.random() * 1000) } }; },
-        on: function(event, callback) {
-          console.log('Mock registering event handler for:', event);
-          // Store the callback for later simulation
-          if (event === 'data') {
-            this._dataHandler = callback;
-          }
-        },
-        _dataHandler: null,
-        startCamera: async function() {
-          console.log('Mock startCamera called');
-          return Promise.resolve();
-        },
-        setLocalVideo: function() {
-          console.log('Mock setLocalVideo called');
-        },
-        sendData: function(data) {
-          console.log('Mock sending data:', data);
-          // Simulate receiving the data back
-          setTimeout(() => {
-            if (this._dataHandler) {
-              this._dataHandler({ data: data });
-            }
-          }, 500);
-        }
-      };
-    } else {
+    // Daily.js should be loaded at this point
+    {
       console.log('Creating real Daily call object');
       
       // First request camera permissions explicitly
@@ -1428,81 +1323,9 @@ async function setupDaily() {
     }
     
   } catch (error) {
-    console.error('Error setting up Daily:', error);
-    alert('Error setting up Daily: ' + error.message);
-    
-    // Create a fallback implementation
-    daily = {
-      join: async function() { return Promise.resolve(); },
-      participants: function() { return { local: { sessionId: 'local-user-fallback' } }; },
-      on: function(event, callback) {
-        console.log('Fallback registering event handler for:', event);
-        // Store the callback for later simulation
-        if (event === 'data') {
-          this._dataHandler = callback;
-        }
-      },
-      _dataHandler: null,
-      startCamera: async function() { return Promise.resolve(); },
-      setLocalVideo: function() {},
-      sendData: function(data) {
-        console.log('Fallback sending data:', data);
-        // Simulate receiving the data back
-        setTimeout(() => {
-          if (this._dataHandler) {
-            this._dataHandler({ data: data });
-          }
-        }, 500);
-      }
-    };
-    
-    myId = daily.participants().local.sessionId;
-    console.log('Connected with fallback ID:', myId);
-    
-    // Add to lobby
-    const dummyVideo = document.createElement('video');
-    dummyVideo.id = 'local-video-fallback';
-    addToLobby(myId, dummyVideo);
-    
-    // Ready button setup for fallback mode
-    setupReadyButton();
-    
-    // Simulate other players for testing
-    console.log('Simulating other players in fallback mode');
-    for (let i = 1; i <= 3; i++) {
-      const playerId = 'fallback-player-' + i;
-      setTimeout(() => {
-        handleParticipantJoined({ participant: { sessionId: playerId } });
-        
-        // Simulate them getting ready after a delay
-        setTimeout(() => {
-          gameManager.setReady(playerId, true);
-        }, 2000 * i);
-      }, 1000 * i);
-    }
-    
-    // Set up periodic connection check
-    setInterval(() => {
-      if (daily && typeof daily.participants === 'function') {
-        try {
-          const participants = daily.participants();
-          const participantCount = Object.keys(participants).length;
-          console.log(`Connection check: ${participantCount} participants connected`);
-          
-          // If we're in the lobby and have lost connection, try to reconnect
-          if (appState === 'lobby' && participantCount <= 1 && typeof Daily !== 'undefined') {
-            console.log('Few participants detected, checking connection...');
-            daily.sendData(JSON.stringify({
-              type: 'ping',
-              id: myId,
-              timestamp: Date.now()
-            }));
-          }
-        } catch (e) {
-          console.error('Error during connection check:', e);
-        }
-      }
-    }, 30000); // Check every 30 seconds
+    console.error('Critical error setting up Daily:', error);
+    alert('Failed to initialize Daily.js WebRTC. Please refresh the page and ensure you have a stable internet connection.');
+    throw error;
   }
 }
 
