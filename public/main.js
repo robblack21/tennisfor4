@@ -145,7 +145,9 @@ class GameStateManager {
     if (this.gameState.players.indexOf(playerId) === -1) {
       this.gameState.players.push(playerId);
       this.readyStates[playerId] = false;
+      console.log('Player added to game state:', playerId, 'Total players:', this.gameState.players.length);
       this.broadcast();
+      updateLobby();
     }
   }
 
@@ -154,34 +156,48 @@ class GameStateManager {
     if (index > -1) {
       this.gameState.players.splice(index, 1);
       delete this.readyStates[playerId];
+      console.log('Player removed from game state:', playerId, 'Total players:', this.gameState.players.length);
       this.broadcast();
+      updateLobby();
     }
   }
 
   setReady(playerId, isReady) {
     this.readyStates[playerId] = isReady;
+    console.log('Player ready state changed:', playerId, isReady);
     this.broadcast();
+    updateLobby();
   }
 
   setMode(mode) {
     this.gameState.mode = mode;
+    console.log('Game mode changed to:', mode);
     this.broadcast();
+    updateLobby();
   }
 
   setState(newState) {
-    this.gameState = newState.state;
-    this.readyStates = newState.readyStates;
+    this.gameState = newState.state || newState;
+    this.readyStates = newState.readyStates || {};
+    console.log('Game state updated:', this.gameState.players.length, 'players');
     updateLobby();
-    updateUI();
+    if (typeof updateUI === 'function') {
+      updateUI();
+    }
   }
 
   broadcast() {
-    if (isHost) {
-      daily.sendData(JSON.stringify({
-        type: 'game-state',
-        state: this.gameState,
-        readyStates: this.readyStates,
-      }));
+    if (isHost && daily && typeof daily.sendData === 'function') {
+      try {
+        daily.sendData(JSON.stringify({
+          type: 'game-state',
+          state: this.gameState,
+          readyStates: this.readyStates,
+        }));
+        console.log('Broadcasted game state to all players');
+      } catch (error) {
+        console.error('Error broadcasting game state:', error);
+      }
     }
   }
 }
@@ -988,14 +1004,18 @@ function getPlayerPositions() {
   }
 }
 
+// Global addPlayer function that delegates to gameManager
 function addPlayer(playerId) {
-  if (gameManager.gameState.players.indexOf(playerId) === -1) {
-    gameManager.gameState.players.push(playerId);
-    gameManager.readyStates[playerId] = false;
-
-    // Create racket and character for the new player
-    if (appState === 'game') {
-      const playerIndex = gameManager.gameState.players.length - 1;
+  console.log('addPlayer called for:', playerId);
+  gameManager.addPlayer(playerId);
+  
+  // Create video element for the new player
+  createParticipantVideoElement(playerId);
+  
+  // Create racket and character for the new player if in game
+  if (appState === 'game') {
+    const playerIndex = gameManager.gameState.players.indexOf(playerId);
+    if (playerIndex >= 0) {
       const racket = createWiiRacket();
       const positions = getPlayerPositions();
       if (positions[playerIndex]) {
@@ -1196,14 +1216,29 @@ async function setupDaily() {
     myId = daily.participants().local.sessionId;
     console.log('Connected with ID:', myId);
 
-    // Determine if this client is the host
+    // Determine if this client is the host based on participant count
     const participants = daily.participants();
-    if (Object.keys(participants).length === 1) {
+    const participantKeys = Object.keys(participants);
+    console.log('Participants on join:', participantKeys);
+    
+    // Check if we're the first or only participant (excluding 'local')
+    const remoteParticipants = participantKeys.filter(key => key !== 'local');
+    if (remoteParticipants.length === 0) {
       isHost = true;
-      console.log('This client is the host.');
-      gameManager.addPlayer(myId);
+      console.log('This client is the host (first to join).');
     } else {
-      daily.sendData(JSON.stringify({ type: 'request-state' }));
+      isHost = false;
+      console.log('This client is not the host. Requesting state from host.');
+    }
+    
+    // Always add this player to the game
+    addPlayer(myId);
+    
+    // If not host, request current state
+    if (!isHost) {
+      setTimeout(() => {
+        daily.sendData(JSON.stringify({ type: 'request-state' }));
+      }, 1000); // Small delay to ensure connection is stable
     }
 
     // Set up event listeners with better error handling
@@ -1316,10 +1351,22 @@ async function setupDaily() {
     }
 
     // Ready button
-    document.getElementById('ready-btn').addEventListener('click', () => {
-      const isReady = !gameManager.readyStates[myId];
-      gameManager.setReady(myId, isReady);
-    });
+    const readyBtn = document.getElementById('ready-btn');
+    if (readyBtn) {
+      readyBtn.addEventListener('click', () => {
+        const currentReady = gameManager.readyStates[myId] || false;
+        const newReady = !currentReady;
+        console.log('Ready button clicked. Current:', currentReady, 'New:', newReady);
+        
+        gameManager.setReady(myId, newReady);
+        
+        // Update button text
+        readyBtn.textContent = newReady ? 'Not Ready' : 'Ready';
+        readyBtn.style.backgroundColor = newReady ? '#ff4444' : '#44ff44';
+      });
+    } else {
+      console.error('Ready button not found in DOM');
+    }
     
     // Add game mode selector
     const gameModeSelector = document.createElement('div');
@@ -1446,10 +1493,15 @@ async function setupDaily() {
 function handleParticipantJoined(event) {
   const participant = event.participant;
   console.log('Participant joined:', participant.sessionId);
+  
+  // Add player to game state
+  addPlayer(participant.sessionId);
+  
+  // If we're the host, broadcast updated state
   if (isHost) {
-    gameManager.addPlayer(participant.sessionId);
+    console.log('Host broadcasting state after participant joined');
+    gameManager.broadcast();
   }
-  createParticipantVideoElement(participant.sessionId);
 }
 
 function createWiiRacket() {
@@ -1575,8 +1627,20 @@ function handleParticipantUpdated(event) {
 function handleParticipantLeft(event) {
   const participantId = event.participant.sessionId;
   console.log('Participant left:', participantId);
+  
+  // Remove player from game state
+  gameManager.removePlayer(participantId);
+  
+  // Remove video element
+  const videoContainer = document.getElementById(`video-container-${participantId}`);
+  if (videoContainer) {
+    videoContainer.remove();
+  }
+  
+  // If we're the host, broadcast updated state
   if (isHost) {
-    gameManager.removePlayer(participantId);
+    console.log('Host broadcasting state after participant left');
+    gameManager.broadcast();
   }
 }
 
