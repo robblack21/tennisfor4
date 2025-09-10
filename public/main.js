@@ -1075,13 +1075,7 @@ async function setupDaily() {
               url: ROOM_URL,
               userName: 'Player-' + Math.floor(Math.random() * 1000),
               showLocalVideo: true,
-              showParticipantsBar: false,
-              // Add additional options for better connection
-              audioProcessing: {
-                echoCancellation: true,
-                noiseSuppression: true,
-                autoGainControl: true
-              }
+              showParticipantsBar: false
             });
             joinSuccess = true;
             console.log('Joined Daily room successfully');
