@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tennis for 4 - Character Test</title>
+  <style>
+    /* Use Google Font that resembles Wii font */
+    @import url('https://fonts.googleapis.com/css2?family=Nunito:wght@400;700&display=swap');
+    
+    body {
+      margin: 0;
+      overflow: hidden;
+      font-family: 'Nunito', 'Myriad Pro', Arial, sans-serif;
+      background: linear-gradient(135deg, #22b14c, #00a2e8);
+      color: white;
+    }
+    
+    #controls {
+      position: absolute;
+      top: 20px;
+      left: 20px;
+      z-index: 10;
+      background: rgba(0, 0, 0, 0.5);
+      padding: 15px;
+      border-radius: 10px;
+    }
+    
+    button {
+      background: linear-gradient(to bottom, #ff9966, #ff7f27);
+      color: white;
+      border: 2px solid white;
+      padding: 10px 20px;
+      border-radius: 20px;
+      font-size: 16px;
+      font-weight: bold;
+      cursor: pointer;
+      margin: 5px;
+      box-shadow: 0 4px 8px rgba(0,0,0,0.3);
+    }
+    
+    button:hover {
+      background: linear-gradient(to bottom, #ffb899, #ff9966);
+    }
+    
+    h1 {
+      margin-top: 0;
+    }
+  </style>
+</head>
+<body>
+  <div id="controls">
+    <h1>Character Test</h1>
+    <button id="test-models">Test Character Models</button>
+    <button id="test-team1">Test Team 1 Animation</button>
+    <button id="test-team2">Test Team 2 Animation</button>
+    <button id="reset">Reset</button>
+  </div>
+  
+  <!-- Load Three.js -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r158/three.min.js"></script>
+  
+  <!-- Load test characters script -->
+  <script src="test-characters.js"></script>
+  
+  <script>
+    // Initialize variables
+    let testScene = null;
+    let team1Character = null;
+    let team2Character = null;
+    
+    // Add event listeners
+    document.getElementById('test-models').addEventListener('click', () => {
+      // Clear previous test if any
+      if (testScene) {
+        document.body.removeChild(document.querySelector('canvas'));
+      }
+      
+      // Run test
+      const result = window.testCharacters.testModels();
+      testScene = result.scene;
+      team1Character = result.team1Character;
+      team2Character = result.team2Character;
+    });
+    
+    document.getElementById('test-team1').addEventListener('click', () => {
+      if (team1Character) {
+        window.testCharacters.testAnimations(team1Character);
+      } else {
+        alert('Please run "Test Character Models" first');
+      }
+    });
+    
+    document.getElementById('test-team2').addEventListener('click', () => {
+      if (team2Character) {
+        window.testCharacters.testAnimations(team2Character);
+      } else {
+        alert('Please run "Test Character Models" first');
+      }
+    });
+    
+    document.getElementById('reset').addEventListener('click', () => {
+      if (testScene) {
+        document.body.removeChild(document.querySelector('canvas'));
+        testScene = null;
+        team1Character = null;
+        team2Character = null;
+      }
+    });
+  </script>
+</body>
+</html>

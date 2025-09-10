@@ -292,11 +292,11 @@ function createDefaultCharacterModel(teamIndex) {
         rightLeg: rightLeg
       },
       restPose: {
-        head: { position: new THREE.Vector3().copy(head.position), rotation: new THREE.Euler().copy(head.rotation) },
-        leftArm: { position: new THREE.Vector3().copy(leftArm.position), rotation: new THREE.Euler().copy(leftArm.rotation) },
-        rightArm: { position: new THREE.Vector3().copy(rightArm.position), rotation: new THREE.Euler().copy(rightArm.rotation) },
-        leftLeg: { position: new THREE.Vector3().copy(leftLeg.position), rotation: new THREE.Euler().copy(leftLeg.rotation) },
-        rightLeg: { position: new THREE.Vector3().copy(rightLeg.position), rotation: new THREE.Euler().copy(rightLeg.rotation) }
+        head: { position: new THREE.Vector3(head.position.x, head.position.y, head.position.z), rotation: new THREE.Euler(head.rotation.x, head.rotation.y, head.rotation.z) },
+        leftArm: { position: new THREE.Vector3(leftArm.position.x, leftArm.position.y, leftArm.position.z), rotation: new THREE.Euler(leftArm.rotation.x, leftArm.rotation.y, leftArm.rotation.z) },
+        rightArm: { position: new THREE.Vector3(rightArm.position.x, rightArm.position.y, rightArm.position.z), rotation: new THREE.Euler(rightArm.rotation.x, rightArm.rotation.y, rightArm.rotation.z) },
+        leftLeg: { position: new THREE.Vector3(leftLeg.position.x, leftLeg.position.y, leftLeg.position.z), rotation: new THREE.Euler(leftLeg.rotation.x, leftLeg.rotation.y, leftLeg.rotation.z) },
+        rightLeg: { position: new THREE.Vector3(rightLeg.position.x, rightLeg.position.y, rightLeg.position.z), rotation: new THREE.Euler(rightLeg.rotation.x, rightLeg.rotation.y, rightLeg.rotation.z) }
       },
       animations: {
         swinging: false,
@@ -528,8 +528,8 @@ function createBallTrail() {
 function updateBallTrail() {
   // Store current position
   ball.previousPositions.unshift({
-    position: ball.position.clone(),
-    velocity: ball.velocity.clone().length()
+    position: new THREE.Vector3(ball.position.x, ball.position.y, ball.position.z),
+    velocity: new THREE.Vector3(ball.velocity.x, ball.velocity.y, ball.velocity.z).length()
   });
   
   // Limit the number of positions stored
