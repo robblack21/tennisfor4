@@ -2367,7 +2367,7 @@ function addToLobby(id, videoElement) {
   container.id = `video-container-${id}`;
   
   // Determine player index and team
-  const playerIndex = gameState.players.indexOf(id);
+  const playerIndex = gameManager.gameState.players.indexOf(id);
   const isLocal = id === myId;
   const teamNumber = (playerIndex === -1 || playerIndex % 2 === 0) ? 1 : 2;
   const teamColor = teamNumber === 1 ? '#FF5722' : '#2196F3';
