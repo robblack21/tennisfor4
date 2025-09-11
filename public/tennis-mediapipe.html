@@ -50,6 +50,21 @@
       border-radius: 10px;
       pointer-events: auto;
       max-width: 300px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    
+    .camera-panel {
+      position: absolute;
+      top: 20px;
+      left: 20px;
+      background: rgba(0,0,0,0.8);
+      color: white;
+      padding: 15px;
+      border-radius: 10px;
+      pointer-events: auto;
+      width: 250px;
     }
     
     .video-container {
@@ -125,60 +140,9 @@
       background: rgba(255,127,39,0.8);
     }
     
-    .countdown-overlay {
-      position: fixed;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
-      background: rgba(0, 0, 0, 0.9);
-      display: flex;
-      flex-direction: column;
-      justify-content: center;
-      align-items: center;
-      z-index: 1000;
-      color: white;
-      font-family: Arial, sans-serif;
-    }
-    
-    .countdown-number {
-      font-size: 120px;
-      font-weight: bold;
-      color: #22b14c;
-      text-shadow: 4px 4px 8px rgba(0,0,0,0.8);
-      margin-bottom: 20px;
-      animation: pulse 1s ease-in-out;
-    }
-    
-    .countdown-text {
-      font-size: 24px;
-      color: #FFF;
-      text-align: center;
-      margin-bottom: 10px;
-    }
-    
-    .countdown-subtext {
-      font-size: 16px;
-      color: #CCC;
-      text-align: center;
-    }
-    
-    @keyframes pulse {
-      0% { transform: scale(1); opacity: 0.8; }
-      50% { transform: scale(1.1); opacity: 1; }
-      100% { transform: scale(1); opacity: 0.8; }
-    }
   </style>
 </head>
 <body>
-  <!-- Countdown Overlay -->
-  <div id="countdown-overlay" class="countdown-overlay">
-    <div class="countdown-text">🎾 Tennis for 2</div>
-    <div id="countdown-number" class="countdown-number">5</div>
-    <div class="countdown-subtext">Syncing multiplayer state...</div>
-    <div class="countdown-subtext">Preparing for 2-player tennis!</div>
-  </div>
-
   <div class="ui-overlay">
     <!-- Game HUD -->
     <div class="game-hud">
@@ -188,44 +152,20 @@
       </div>
     </div>
     
-    <!-- MediaPipe Controls -->
-    <div class="controls-panel">
-      <h3>🎾 MediaPipe Tennis</h3>
-      
-      <div style="display: flex; flex-wrap: wrap;">
-        <button onclick="startCamera()">Start Camera</button>
-        <button onclick="togglePoseTracking()">Toggle Pose</button>
-        <button onclick="joinDailyRoom()">Join Multiplayer</button>
-        <button onclick="resetGame()">Reset Game</button>
-        <button onclick="toggleFullscreen()">Fullscreen</button>
-      </div>
-      
-      <!-- Daily.js Video Call Interface -->
-      <div id="daily-container" style="display: none;">
-        <div style="margin: 10px 0; font-size: 12px; color: #ccc;">
-          Multiplayer Video Call:
-        </div>
-        <iframe
-          id="daily-iframe"
-          width="100%"
-          height="200"
-          style="border-radius: 8px; border: none;"
-          allow="camera; microphone; fullscreen; display-capture; autoplay">
-        </iframe>
+    <!-- Left Side Camera Panel -->
+    <div class="camera-panel">
+      <div style="font-size: 14px; font-weight: bold; margin-bottom: 10px; color: #22b14c;">
+        🎾 Pose Tracking
       </div>
       
       <!-- MediaPipe Camera (for pose tracking) -->
       <div class="video-container">
-        <div style="font-size: 11px; color: #ccc; margin-bottom: 5px;">
-          Pose Tracking Camera:
-        </div>
         <video id="webcam" autoplay muted playsinline></video>
       </div>
       
       <div id="status-container">
         <div class="status" id="camera-status">Camera: Not started</div>
         <div class="status" id="mediapipe-status">MediaPipe: Loading...</div>
-        <div class="status" id="daily-status">Daily: Not connected</div>
         <div class="status" id="game-status-detail">Game: Ready</div>
       </div>
       
@@ -235,6 +175,32 @@
         Ball: <span id="ball-position">-</span><br>
         Players: <span id="player-count">2</span>
       </div>
+    </div>
+    
+    <!-- Right Side Controls Panel -->
+    <div class="controls-panel">
+      <h3>🎾 MediaPipe Tennis</h3>
+      
+      <div style="display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 15px;">
+        <button onclick="resetGame()">Reset Game</button>
+        <button onclick="toggleFullscreen()">Fullscreen</button>
+      </div>
+      
+      <!-- Daily.js Video Call Interface -->
+      <div id="daily-container">
+        <div style="margin-bottom: 10px; font-size: 12px; color: #ccc;">
+          Multiplayer Video Call:
+        </div>
+        <iframe
+          id="daily-iframe"
+          width="100%"
+          height="350"
+          style="border-radius: 8px; border: none;"
+          allow="camera; microphone; fullscreen; display-capture; autoplay">
+        </iframe>
+      </div>
+      
+      <div class="status" id="daily-status">Daily: Auto-connecting...</div>
     </div>
     
     <!-- Player Indicators -->
@@ -287,7 +253,8 @@
       team2Sets: 0,
       isPlaying: true,
       currentServer: 0, // Player ID of current server
-      ballSide: 1 // 1 = team 1 side, -1 = team 2 side
+      ballSide: 1, // 1 = team 1 side, -1 = team 2 side
+      servingPlayer: 0 // Current serving player (alternates each point)
     };
     
     // WebSocket variables for gesture sharing
@@ -686,9 +653,13 @@
       const lineMaterial = new THREE.MeshBasicMaterial({ color: 0xFFFFFF });
       const lineHeight = 0.02;
       
-      // Net
+      // Net - translucent like volleyball
       const netGeometry = new THREE.BoxGeometry(12.8, 0.914, 0.1);
-      const netMaterial = new THREE.MeshLambertMaterial({ color: 0xFFFFFF });
+      const netMaterial = new THREE.MeshLambertMaterial({
+        color: 0xFFFFFF,
+        transparent: true,
+        opacity: 0.3 // Translucent net
+      });
       const net = new THREE.Mesh(netGeometry, netMaterial);
       net.position.set(0, 0.5, 0);
       net.castShadow = true;
@@ -1088,38 +1059,43 @@
       }
     }
     
-    // Ultra-simplified tennis: wave arm to send ball straight to other player
+    // Ultra-simplified tennis: both players can hit ball within range
     function hitBallIfNearby(player, swingPower) {
       const playerId = player.userData.playerId;
       
-      // Only allow hitting if ball is on this player's side
-      const ballCurrentSide = tennisBall.position.z > 0 ? 1 : -1;
-      const playerSide = playerId === 0 ? 1 : -1; // Player 0 = positive Z side, Player 1 = negative Z side
+      // Check ball proximity to player (within hitting range)
+      const playerPos = player.position;
+      const ballPos = tennisBall.position;
+      const distance = Math.sqrt(
+        Math.pow(playerPos.x - ballPos.x, 2) +
+        Math.pow(playerPos.z - ballPos.z, 2)
+      );
       
-      if (ballCurrentSide !== playerSide) {
-        console.log(`🎾 Player ${playerId + 1} can't hit - ball not on their side`);
-        return; // Ball not on this player's side
+      // Only allow hitting if ball is close enough (within 2.5 units)
+      if (distance > 2.5) {
+        console.log(`🎾 Player ${playerId + 1} can't hit - ball too far (${distance.toFixed(1)})`);
+        return;
       }
       
       // Determine straight target position (directly to other player)
       let targetZ;
       if (playerId === 0) {
-        // Player 1 hits to Player 2
+        // Player 1 (green) hits to Player 2 (red)
         targetZ = -3;
         gameState.ballSide = -1;
       } else {
-        // Player 2 hits to Player 1
+        // Player 2 (red) hits to Player 1 (green)
         targetZ = 3;
         gameState.ballSide = 1;
       }
       
       // Ultra-simplified parabolic trajectory - straight between players
-      const distance = Math.abs(targetZ - tennisBall.position.z);
+      const distanceToTarget = Math.abs(targetZ - tennisBall.position.z);
       gameState.ballVelocity.x = 0; // No side movement - straight across
-      gameState.ballVelocity.y = 3 + (distance * 0.4); // Moderate parabolic arc
+      gameState.ballVelocity.y = 3 + (distanceToTarget * 0.4); // Moderate parabolic arc
       gameState.ballVelocity.z = (targetZ - tennisBall.position.z) * 1.2; // Direct toward other player
       
-      console.log(`🎾 Player ${playerId + 1} hit ball straight to Player ${gameState.ballSide === 1 ? '1' : '2'}!`);
+      console.log(`🎾 Player ${playerId + 1} (${playerId === 0 ? 'Green' : 'Red'}) hit ball to Player ${gameState.ballSide === 1 ? '1 (Green)' : '2 (Red)'}!`);
       
       // Play ball hit sound
       playSound(440, 0.2, 0.5);
@@ -1180,7 +1156,7 @@
       }
     }
     
-    // Handle ball miss and scoring with better logic
+    // Handle ball miss and scoring with serve alternation
     function handleBallMiss() {
       console.log('🎾 Ball missed! Scoring point...');
       
@@ -1196,12 +1172,15 @@
         gameState.team1Score++;
       }
       
-      console.log(`🏆 Player ${scoringPlayer} scores! New score: ${gameState.team1Score}-${gameState.team2Score}`);
+      // Alternate serving player each point
+      gameState.servingPlayer = gameState.servingPlayer === 0 ? 1 : 0;
+      
+      console.log(`🏆 Player ${scoringPlayer} scores! New score: ${gameState.team1Score}-${gameState.team2Score}, Next serve: Player ${gameState.servingPlayer + 1}`);
       updateScore();
       
-      // Add delay before resetting ball
+      // Add delay before resetting ball to serving side
       setTimeout(() => {
-        resetBallToCenter();
+        resetBallToServingSide();
       }, 1000);
     }
     
@@ -1277,11 +1256,24 @@
       }
     }
     
-    // Reset ball to center position
-    function resetBallToCenter() {
-      tennisBall.position.set(0, 1.5, 2); // Start on Player 1 side
+    // Reset ball to serving player's side
+    function resetBallToServingSide() {
+      if (gameState.servingPlayer === 0) {
+        // Player 1 (green) serves
+        tennisBall.position.set(0, 1.5, 2.5); // Player 1 side
+        gameState.ballSide = 1;
+      } else {
+        // Player 2 (red) serves
+        tennisBall.position.set(0, 1.5, -2.5); // Player 2 side
+        gameState.ballSide = -1;
+      }
       gameState.ballVelocity = { x: 0, y: 0, z: 0 };
-      gameState.ballSide = 1; // Always start on Player 1 side
+      console.log(`🎾 Ball reset to Player ${gameState.servingPlayer + 1} serving side`);
+    }
+    
+    // Reset ball to center position (legacy function)
+    function resetBallToCenter() {
+      resetBallToServingSide();
     }
     
     // Reset ball position (legacy function)
@@ -1291,7 +1283,8 @@
     
     // Reset game
     function resetGame() {
-      resetBallToCenter();
+      gameState.servingPlayer = 0; // Start with Player 1 serving
+      resetBallToServingSide();
       gameState.team1Score = 0;
       gameState.team2Score = 0;
       gameState.team1Games = 0;
@@ -1302,7 +1295,7 @@
       
       document.getElementById('team1-score').textContent = '0';
       document.getElementById('team2-score').textContent = '0';
-      document.getElementById('game-status').textContent = 'New Match Started';
+      document.getElementById('game-status').textContent = 'New Match Started - Player 1 Serves';
     }
     
     // Toggle fullscreen
@@ -1365,33 +1358,8 @@
     // Initialize everything
     init();
     
-    // Show countdown before starting
-    function startCountdown() {
-      const overlay = document.getElementById('countdown-overlay');
-      const numberElement = document.getElementById('countdown-number');
-      let count = 5;
-      
-      const countdownInterval = setInterval(() => {
-        count--;
-        if (count > 0) {
-          numberElement.textContent = count;
-          console.log(`⏰ Tennis Countdown: ${count}`);
-        } else {
-          numberElement.textContent = 'START!';
-          setTimeout(() => {
-            overlay.style.display = 'none';
-            console.log('🚀 Tennis countdown complete - starting tennis experience...');
-            
-            // Start auto-setup after countdown
-            startTennisExperience();
-          }, 1000);
-          clearInterval(countdownInterval);
-        }
-      }, 1000);
-    }
-    
-    // Auto-setup everything after countdown
-    async function startTennisExperience() {
+    // Auto-setup everything when script loads (no countdown)
+    setTimeout(async () => {
       console.log('🚀 Auto-starting tennis experience...');
       
       // Setup MediaPipe first
@@ -1401,17 +1369,13 @@
       setTimeout(() => {
         console.log('🚀 Auto-joining tennis multiplayer...');
         joinDailyRoom();
-      }, 1000);
+      }, 2000);
       
       setTimeout(() => {
         console.log('🚀 Auto-starting camera and pose tracking...');
         startCamera();
-      }, 2000);
-    }
-    
-    // Start countdown when page loads
-    setTimeout(() => {
-      startCountdown();
+      }, 3000);
+      
     }, 1000);
     
     // Clean up on page unload

@@ -50,6 +50,21 @@
       border-radius: 10px;
       pointer-events: auto;
       max-width: 300px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    
+    .camera-panel {
+      position: absolute;
+      top: 20px;
+      left: 20px;
+      background: rgba(0,0,0,0.8);
+      color: white;
+      padding: 15px;
+      border-radius: 10px;
+      pointer-events: auto;
+      width: 250px;
     }
     
     .video-container {
@@ -125,60 +140,9 @@
       background: rgba(255,107,53,0.8);
     }
     
-    .countdown-overlay {
-      position: fixed;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
-      background: rgba(0, 0, 0, 0.9);
-      display: flex;
-      flex-direction: column;
-      justify-content: center;
-      align-items: center;
-      z-index: 1000;
-      color: white;
-      font-family: Arial, sans-serif;
-    }
-    
-    .countdown-number {
-      font-size: 120px;
-      font-weight: bold;
-      color: #FF6B35;
-      text-shadow: 4px 4px 8px rgba(0,0,0,0.8);
-      margin-bottom: 20px;
-      animation: pulse 1s ease-in-out;
-    }
-    
-    .countdown-text {
-      font-size: 24px;
-      color: #FFF;
-      text-align: center;
-      margin-bottom: 10px;
-    }
-    
-    .countdown-subtext {
-      font-size: 16px;
-      color: #CCC;
-      text-align: center;
-    }
-    
-    @keyframes pulse {
-      0% { transform: scale(1); opacity: 0.8; }
-      50% { transform: scale(1.1); opacity: 1; }
-      100% { transform: scale(1); opacity: 0.8; }
-    }
   </style>
 </head>
 <body>
-  <!-- Countdown Overlay -->
-  <div id="countdown-overlay" class="countdown-overlay">
-    <div class="countdown-text">🏐 Volleyball for 10</div>
-    <div id="countdown-number" class="countdown-number">5</div>
-    <div class="countdown-subtext">Syncing multiplayer state...</div>
-    <div class="countdown-subtext">Preparing for 10-player volleyball!</div>
-  </div>
-
   <div class="ui-overlay">
     <!-- Game HUD -->
     <div class="game-hud">
@@ -188,44 +152,20 @@
       </div>
     </div>
     
-    <!-- MediaPipe Controls -->
-    <div class="controls-panel">
-      <h3>🏐 MediaPipe Volleyball</h3>
-      
-      <div style="display: flex; flex-wrap: wrap;">
-        <button onclick="startCamera()">Start Camera</button>
-        <button onclick="togglePoseTracking()">Toggle Pose</button>
-        <button onclick="joinDailyRoom()">Join Multiplayer</button>
-        <button onclick="resetGame()">Reset Game</button>
-        <button onclick="toggleFullscreen()">Fullscreen</button>
-      </div>
-      
-      <!-- Daily.js Video Call Interface -->
-      <div id="daily-container" style="display: none;">
-        <div style="margin: 10px 0; font-size: 12px; color: #ccc;">
-          Multiplayer Video Call:
-        </div>
-        <iframe
-          id="daily-iframe"
-          width="100%"
-          height="200"
-          style="border-radius: 8px; border: none;"
-          allow="camera; microphone; fullscreen; display-capture; autoplay">
-        </iframe>
+    <!-- Left Side Camera Panel -->
+    <div class="camera-panel">
+      <div style="font-size: 14px; font-weight: bold; margin-bottom: 10px; color: #FF6B35;">
+        🏐 Pose Tracking
       </div>
       
       <!-- MediaPipe Camera (for pose tracking) -->
       <div class="video-container">
-        <div style="font-size: 11px; color: #ccc; margin-bottom: 5px;">
-          Pose Tracking Camera:
-        </div>
         <video id="webcam" autoplay muted playsinline></video>
       </div>
       
       <div id="status-container">
         <div class="status" id="camera-status">Camera: Not started</div>
         <div class="status" id="mediapipe-status">MediaPipe: Loading...</div>
-        <div class="status" id="daily-status">Daily: Not connected</div>
         <div class="status" id="game-status-detail">Game: Ready</div>
       </div>
       
@@ -235,6 +175,32 @@
         Ball: <span id="ball-position">-</span><br>
         Players: <span id="player-count">10</span>
       </div>
+    </div>
+    
+    <!-- Right Side Controls Panel -->
+    <div class="controls-panel">
+      <h3>🏐 MediaPipe Volleyball</h3>
+      
+      <div style="display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 15px;">
+        <button onclick="resetGame()">Reset Game</button>
+        <button onclick="toggleFullscreen()">Fullscreen</button>
+      </div>
+      
+      <!-- Daily.js Video Call Interface -->
+      <div id="daily-container">
+        <div style="margin-bottom: 10px; font-size: 12px; color: #ccc;">
+          Multiplayer Video Call:
+        </div>
+        <iframe
+          id="daily-iframe"
+          width="100%"
+          height="350"
+          style="border-radius: 8px; border: none;"
+          allow="camera; microphone; fullscreen; display-capture; autoplay">
+        </iframe>
+      </div>
+      
+      <div class="status" id="daily-status">Daily: Auto-connecting...</div>
     </div>
     
     <!-- Player Indicators -->
@@ -283,7 +249,7 @@
     let currentPose = null;
     let lastSpike = 0;
     let cameraTime = 0;
-    let baseCameraPosition = { x: 0, y: 8, z: 12 }; // 1.5x farther back from court
+    let baseCameraPosition = { x: 0, y: 8, z: 20 }; // 1.66x farther back from court
     
     let gameState = {
       ballPosition: { x: 0, y: 2, z: 0 },
@@ -368,19 +334,16 @@
       oscillator.stop(audioContext.currentTime + duration);
     }
     
-    // Join Daily.js volleyball room
+    // Join Daily.js volleyball room automatically
     async function joinDailyRoom() {
       try {
-        const dailyContainer = document.getElementById('daily-container');
         const dailyIframe = document.getElementById('daily-iframe');
-        
-        dailyContainer.style.display = 'block';
         
         // Set the iframe source to the volleyball room with muted mics
         dailyIframe.src = 'https://vcroom.daily.co/volleyball?layout=grid&showParticipantNames=true&showLeaveButton=true&startAudioOff=true';
         
         updateStatus('daily-status', 'Daily: Video Connected ✅', 'good');
-        console.log('✅ Joined Daily.js volleyball room for video');
+        console.log('✅ Auto-joined Daily.js volleyball room for video');
         
         initializeWebSocket();
         
@@ -618,9 +581,9 @@
       scene = new THREE.Scene();
       scene.background = new THREE.Color(0x87CEEB);
       
-      // Create camera - volleyball court view (moved back 1.5x)
+      // Create camera - volleyball court view (moved back 1.66x)
       camera = new THREE.PerspectiveCamera(24.75, window.innerWidth / window.innerHeight, 0.1, 1000);
-      camera.position.set(0, 8, 12); // 1.5x farther back from court
+      camera.position.set(0, 8, 20); // 1.66x farther back from court
       camera.lookAt(0, 2, 0);
       
       renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -1036,7 +999,7 @@
       }
     }
     
-    // Volleyball spike with strict player-to-player trajectories
+    // Hardcoded volleyball trajectories - direct player-to-player parabolic paths
     function spikeVolleyball(player, spikePower) {
       const playerId = player.userData.playerId;
       const playerTeam = player.userData.team;
@@ -1047,42 +1010,65 @@
       
       if (ballCurrentSide !== playerSide) {
         console.log(`🏐 Player ${playerId + 1} can't spike - ball not on their side`);
-        return; // Ball not on this player's team side
+        return;
       }
       
-      // Get target position - one of 5 players on opposite side
-      let targetIndex;
-      if (playerTeam === 1) {
-        // Team 1 to Team 2: choose one of positions 5-9
-        targetIndex = 5 + Math.floor(Math.random() * 5); // Random target on team 2
-      } else {
-        // Team 2 to Team 1: choose one of positions 0-4
-        targetIndex = Math.floor(Math.random() * 5); // Random target on team 1
-      }
+      // Hardcoded trajectory mapping: each player to specific opponent
+      const trajectoryMap = {
+        // Team 1 to Team 2 (players 0-4 to players 5-9)
+        0: 5, 1: 6, 2: 7, 3: 8, 4: 9,
+        // Team 2 to Team 1 (players 5-9 to players 0-4)
+        5: 0, 6: 1, 7: 2, 8: 3, 9: 4
+      };
       
-      const targetPos = gameState.targetPositions[targetIndex];
-      const currentPos = volleyball.position;
+      const targetPlayerId = trajectoryMap[playerId];
+      const targetPos = gameState.targetPositions[targetPlayerId];
+      const playerPos = gameState.targetPositions[playerId];
       
-      // Calculate strict parabolic volleyball trajectory
-      const distance = Math.sqrt(
-        Math.pow(targetPos.x - currentPos.x, 2) +
-        Math.pow(targetPos.z - currentPos.z, 2)
-      );
+      // Start hardcoded parabolic animation
+      startHardcodedTrajectory(playerPos, targetPos, targetPlayerId);
       
-      // Strict parabolic trajectory from player to opposite team player
-      gameState.ballVelocity.x = (targetPos.x - currentPos.x) * 1.8;
-      gameState.ballVelocity.y = 6 + (distance * 0.4); // High parabolic arc
-      gameState.ballVelocity.z = (targetPos.z - currentPos.z) * 1.8;
+      console.log(`🏐 Player ${playerId + 1} spikes directly to Player ${targetPlayerId + 1}!`);
       
-      // Switch ball side
-      gameState.ballSide = gameState.ballSide === 1 ? -1 : 1;
-      
-      console.log(`🏐 Player ${playerId + 1} (Team ${playerTeam}) spikes to Player ${targetIndex + 1}!`);
-      
-      playSound(380, 0.2, 0.5); // Volleyball hit sound
-      
-      // Broadcast the spike to other players immediately
+      playSound(380, 0.2, 0.5);
       broadcastBallSpike();
+    }
+    
+    // Hardcoded parabolic trajectory animation (no physics)
+    function startHardcodedTrajectory(startPos, endPos, targetPlayerId) {
+      const startTime = Date.now();
+      const duration = 1500; // 1.5 seconds flight time
+      
+      function animateTrajectory() {
+        const elapsed = Date.now() - startTime;
+        const progress = Math.min(elapsed / duration, 1);
+        
+        if (progress >= 1) {
+          // Trajectory complete - ball reached target
+          volleyball.position.set(endPos.x, 0.3, endPos.z);
+          gameState.ballVelocity = { x: 0, y: 0, z: 0 };
+          gameState.ballSide = gameState.ballSide === 1 ? -1 : 1;
+          
+          // Ball collision sound
+          playSound(280, 0.1, 0.2);
+          console.log(`🏐 Ball reached Player ${targetPlayerId + 1} position`);
+          return;
+        }
+        
+        // Calculate parabolic path
+        const x = startPos.x + (endPos.x - startPos.x) * progress;
+        const z = startPos.z + (endPos.z - startPos.z) * progress;
+        
+        // Parabolic height (peak at 50% progress)
+        const heightProgress = 1 - Math.pow(2 * progress - 1, 2);
+        const y = 0.3 + (heightProgress * 4); // 4m peak height
+        
+        volleyball.position.set(x, y, z);
+        
+        requestAnimationFrame(animateTrajectory);
+      }
+      
+      animateTrajectory();
     }
     
     // Apply head tracking for immersive camera movement
@@ -1120,45 +1106,25 @@
         `${volleyball.position.x.toFixed(1)}, ${volleyball.position.y.toFixed(1)}, ${volleyball.position.z.toFixed(1)}`;
     }
     
-    // Update volleyball physics
+    // Minimal volleyball physics - only collision detection
     function updateVolleyballPhysics() {
-      const dt = 0.016; // 60fps
+      // Only check for out of bounds (no physics movement, handled by hardcoded trajectories)
       
-      // Apply gravity
-      gameState.ballVelocity.y -= 9.8 * dt;
+      // Court bounds check
+      if (Math.abs(volleyball.position.x) > 9 || Math.abs(volleyball.position.z) > 4.5) {
+        handleVolleyballMiss();
+        return;
+      }
       
-      // Update position
-      volleyball.position.x += gameState.ballVelocity.x * dt;
-      volleyball.position.y += gameState.ballVelocity.y * dt;
-      volleyball.position.z += gameState.ballVelocity.z * dt;
-      
-      // Ground bounce
+      // Ground collision check
       if (volleyball.position.y <= 0.3) {
         volleyball.position.y = 0.3;
-        gameState.ballVelocity.y = Math.abs(gameState.ballVelocity.y) * 0.5; // Less bouncy
-        gameState.ballVelocity.x *= 0.9;
-        gameState.ballVelocity.z *= 0.9;
-        
         playSound(280, 0.1, 0.2); // Volleyball bounce
         
-        // Check if ball missed
+        // Check if ball missed after bouncing
         if (Math.abs(volleyball.position.z) > 4) {
           handleVolleyballMiss();
         }
-      }
-      
-      // Court bounds
-      if (Math.abs(volleyball.position.x) > 9) {
-        handleVolleyballMiss();
-      }
-      
-      if (Math.abs(volleyball.position.z) > 4.5) {
-        handleVolleyballMiss();
-      }
-      
-      // Reset if too high
-      if (volleyball.position.y > 25) {
-        resetVolleyballToCenter();
       }
     }
     
@@ -1305,33 +1271,8 @@
     // Initialize everything
     init();
     
-    // Show countdown before starting
-    function startCountdown() {
-      const overlay = document.getElementById('countdown-overlay');
-      const numberElement = document.getElementById('countdown-number');
-      let count = 5;
-      
-      const countdownInterval = setInterval(() => {
-        count--;
-        if (count > 0) {
-          numberElement.textContent = count;
-          console.log(`⏰ Countdown: ${count}`);
-        } else {
-          numberElement.textContent = 'START!';
-          setTimeout(() => {
-            overlay.style.display = 'none';
-            console.log('🚀 Countdown complete - starting volleyball experience...');
-            
-            // Start auto-setup after countdown
-            startVolleyballExperience();
-          }, 1000);
-          clearInterval(countdownInterval);
-        }
-      }, 1000);
-    }
-    
-    // Auto-setup everything after countdown
-    async function startVolleyballExperience() {
+    // Auto-setup everything when script loads (no countdown)
+    setTimeout(async () => {
       console.log('🚀 Auto-starting volleyball experience...');
       
       await setupMediaPipe();
@@ -1339,17 +1280,13 @@
       setTimeout(() => {
         console.log('🚀 Auto-joining volleyball multiplayer...');
         joinDailyRoom();
-      }, 1000);
+      }, 2000);
       
       setTimeout(() => {
         console.log('🚀 Auto-starting camera and pose tracking...');
         startCamera();
-      }, 2000);
-    }
-    
-    // Start countdown when page loads
-    setTimeout(() => {
-      startCountdown();
+      }, 3000);
+      
     }, 1000);
     
     // Clean up on page unload
