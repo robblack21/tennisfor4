@@ -430,20 +430,64 @@
         case 'ballHit':
           // Synchronize ball state
           gameState.ballVelocity = data.ballVelocity;
-          tennisBall.position.copy(data.ballPosition);
+          tennisBall.position.set(data.ballPosition.x, data.ballPosition.y, data.ballPosition.z);
+          gameState.ballSide = data.ballSide;
           playSound(440, 0.2, 0.5);
+          console.log(`🎾 Received ball hit from Player ${data.playerId + 1}`);
+          break;
+        case 'ballUpdate':
+          // Continuous ball position sync
+          if (Math.abs(data.timestamp - Date.now()) < 500) { // Only sync recent updates
+            tennisBall.position.set(data.ballPosition.x, data.ballPosition.y, data.ballPosition.z);
+            gameState.ballVelocity = data.ballVelocity;
+          }
           break;
       }
     }
     
-    // Handle gesture messages
+    // Handle gesture messages - apply remote poses to correct players
     function handleGestureMessage(data) {
       if (data.type === 'pose' && data.playerId !== myPlayerId) {
-        // Apply received pose to the corresponding player
+        // Apply received pose to the specific remote player only
         if (data.playerId >= 0 && data.playerId < players.length && players[data.playerId]) {
-          applyPoseToPlayer(data.pose, players[data.playerId]);
+          applyRemotePoseToPlayer(data.pose, players[data.playerId]);
         }
       }
+    }
+    
+    // Apply remote player poses (without triggering ball hits)
+    function applyRemotePoseToPlayer(pose, player) {
+      if (!pose || !player) return;
+      
+      const wrist = pose[16];
+      const elbow = pose[14];
+      const shoulder = pose[12];
+      const leftWrist = pose[15];
+      const leftShoulder = pose[11];
+      
+      if (!wrist || !elbow || !shoulder) return;
+      
+      const bones = player.userData.bones;
+      if (!bones) return;
+      
+      // Apply arm rotation (visual only, no ball interaction)
+      if (bones.rightArm) {
+        const armAngleX = (wrist.y - shoulder.y) * 3;
+        const armAngleZ = -(wrist.x - shoulder.x) * 3;
+        
+        bones.rightArm.rotation.x = armAngleX;
+        bones.rightArm.rotation.z = armAngleZ;
+      }
+      
+      if (bones.leftArm && leftWrist) {
+        const leftArmAngleX = (leftWrist.y - leftShoulder.y) * 3;
+        const leftArmAngleZ = -(leftWrist.x - leftShoulder.x) * 3;
+        
+        bones.leftArm.rotation.x = leftArmAngleX;
+        bones.leftArm.rotation.z = leftArmAngleZ;
+      }
+      
+      // Note: No ball interaction for remote players - only visual arm movement
     }
     
     // Send pose data via WebSocket or localStorage
@@ -464,12 +508,17 @@
       }
     }
     
-    // Send ball hit data
+    // Send ball hit data with complete state
     function broadcastBallHit() {
       const ballMessage = {
         type: 'ballHit',
         ballVelocity: gameState.ballVelocity,
-        ballPosition: tennisBall.position,
+        ballPosition: {
+          x: tennisBall.position.x,
+          y: tennisBall.position.y,
+          z: tennisBall.position.z
+        },
+        ballSide: gameState.ballSide,
         playerId: myPlayerId,
         timestamp: Date.now()
       };
@@ -479,6 +528,24 @@
       } else {
         localStorage.setItem('tennisGestures', JSON.stringify(ballMessage));
       }
+    }
+    
+    // Continuously sync ball position for all players
+    function broadcastBallUpdate() {
+      if (!wsConnected || ws.readyState !== WebSocket.OPEN) return;
+      
+      const ballUpdate = {
+        type: 'ballUpdate',
+        ballPosition: {
+          x: tennisBall.position.x,
+          y: tennisBall.position.y,
+          z: tennisBall.position.z
+        },
+        ballVelocity: gameState.ballVelocity,
+        timestamp: Date.now()
+      };
+      
+      ws.send(JSON.stringify(ballUpdate));
     }
     
     // Update player count display
@@ -968,30 +1035,38 @@
       }
     }
     
-    // Ultra-simplified tennis: wave arm to send ball to other side
+    // Ultra-simplified tennis: wave arm to send ball straight to other player
     function hitBallIfNearby(player, swingPower) {
-      // Simplified: any swing motion sends ball to opposite side
       const playerId = player.userData.playerId;
       
-      // Determine target side based on current ball position
+      // Only allow hitting if ball is on this player's side
+      const ballCurrentSide = tennisBall.position.z > 0 ? 1 : -1;
+      const playerSide = playerId === 0 ? 1 : -1; // Player 0 = positive Z side, Player 1 = negative Z side
+      
+      if (ballCurrentSide !== playerSide) {
+        console.log(`🎾 Player ${playerId + 1} can't hit - ball not on their side`);
+        return; // Ball not on this player's side
+      }
+      
+      // Determine straight target position (directly to other player)
       let targetZ;
-      if (gameState.ballSide === 1) {
-        // Ball on player 1 side, send to player 2 side
+      if (playerId === 0) {
+        // Player 1 hits to Player 2
         targetZ = -3;
         gameState.ballSide = -1;
       } else {
-        // Ball on player 2 side, send to player 1 side
+        // Player 2 hits to Player 1
         targetZ = 3;
         gameState.ballSide = 1;
       }
       
-      // Parabolic ball trajectory with higher arc
+      // Ultra-simplified parabolic trajectory - straight between players
       const distance = Math.abs(targetZ - tennisBall.position.z);
-      gameState.ballVelocity.x = (Math.random() - 0.5) * 1; // Slight random x movement
-      gameState.ballVelocity.y = 4 + (distance * 0.5); // Higher parabolic arc
-      gameState.ballVelocity.z = (targetZ - tennisBall.position.z) * 1.5; // Toward target
+      gameState.ballVelocity.x = 0; // No side movement - straight across
+      gameState.ballVelocity.y = 3 + (distance * 0.4); // Moderate parabolic arc
+      gameState.ballVelocity.z = (targetZ - tennisBall.position.z) * 1.2; // Direct toward other player
       
-      console.log(`🎾 Player ${playerId + 1} hit ball to Player ${gameState.ballSide === 1 ? '1' : '2'} side!`);
+      console.log(`🎾 Player ${playerId + 1} hit ball straight to Player ${gameState.ballSide === 1 ? '1' : '2'}!`);
       
       // Play ball hit sound
       playSound(440, 0.2, 0.5);
@@ -1010,7 +1085,7 @@
         `${tennisBall.position.x.toFixed(1)}, ${tennisBall.position.y.toFixed(1)}, ${tennisBall.position.z.toFixed(1)}`;
     }
     
-    // Update ball physics
+    // Update ball physics - only bounce on ground, no automatic rebounds
     function updateBallPhysics() {
       const dt = 0.016; // 60fps
       
@@ -1022,7 +1097,7 @@
       tennisBall.position.y += gameState.ballVelocity.y * dt;
       tennisBall.position.z += gameState.ballVelocity.z * dt;
       
-      // Ground bounce - higher for large ball
+      // Ground bounce only - no automatic court rebounds
       if (tennisBall.position.y <= 0.4) {
         tennisBall.position.y = 0.4;
         gameState.ballVelocity.y = Math.abs(gameState.ballVelocity.y) * 0.6;
@@ -1032,25 +1107,18 @@
         // Play bounce sound
         playSound(330, 0.1, 0.2);
         
-        // Check if ball missed (went too far on either side)
-        if (Math.abs(tennisBall.position.z) > 4.5) {
+        // Check if ball went out of bounds and score
+        if (Math.abs(tennisBall.position.z) > 4.5 || Math.abs(tennisBall.position.x) > 8) {
           console.log('🎾 Ball out of bounds! Scoring...');
           handleBallMiss();
           return;
         }
-      }
-      
-      // Court bounds - score points if ball goes out
-      if (Math.abs(tennisBall.position.x) > 8) {
-        console.log('🎾 Ball out of bounds sideline!');
-        handleBallMiss();
-        return;
-      }
-      
-      if (Math.abs(tennisBall.position.z) > 5.5) {
-        console.log('🎾 Ball out of bounds baseline!');
-        handleBallMiss();
-        return;
+        
+        // Stop ball movement after bouncing - wait for player gesture
+        if (Math.abs(gameState.ballVelocity.x) < 0.5 && Math.abs(gameState.ballVelocity.z) < 0.5) {
+          gameState.ballVelocity.x = 0;
+          gameState.ballVelocity.z = 0;
+        }
       }
       
       // Reset ball if it goes too high
@@ -1158,9 +1226,9 @@
     
     // Reset ball to center position
     function resetBallToCenter() {
-      tennisBall.position.set(0, 1.5, 0); // Center court, elevated
+      tennisBall.position.set(0, 1.5, 2); // Start on Player 1 side
       gameState.ballVelocity = { x: 0, y: 0, z: 0 };
-      gameState.ballSide = Math.random() > 0.5 ? 1 : -1; // Random starting side
+      gameState.ballSide = 1; // Always start on Player 1 side
     }
     
     // Reset ball position (legacy function)
@@ -1199,6 +1267,11 @@
       
       // Update ball physics
       updateBallPhysics();
+      
+      // Broadcast ball position every few frames for sync
+      if (Math.floor(cameraTime * 60) % 5 === 0) { // Every 5 frames at 60fps
+        broadcastBallUpdate();
+      }
       
       // Cinematic camera movement with gentle squirrel motion
       cameraTime += 0.01;
