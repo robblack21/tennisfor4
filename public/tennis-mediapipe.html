@@ -170,10 +170,15 @@
       </div>
       
       <div class="pose-data">
-        <strong>Pose Data:</strong><br>
+        <strong>Debug Data:</strong><br>
+        My ID: <span id="my-player-id">-</span><br>
+        Hands Visible: <span id="hands-visible">-</span><br>
         Swing: <span id="swing-velocity">-</span><br>
         Ball: <span id="ball-position">-</span><br>
-        Players: <span id="player-count">2</span>
+        Ball Side: <span id="ball-side">-</span><br>
+        Ball Owner: <span id="ball-owner">-</span><br>
+        Players: <span id="player-count">2</span><br>
+        Peers: <span id="peer-count">-</span>
       </div>
     </div>
     
@@ -194,7 +199,7 @@
         <iframe
           id="daily-iframe"
           width="100%"
-          height="350"
+          height="525"
           style="border-radius: 8px; border: none;"
           allow="camera; microphone; fullscreen; display-capture; autoplay">
         </iframe>
@@ -254,7 +259,8 @@
       isPlaying: true,
       currentServer: 0, // Player ID of current server
       ballSide: 1, // 1 = team 1 side, -1 = team 2 side
-      servingPlayer: 0 // Current serving player (alternates each point)
+      servingPlayer: 0, // Current serving player (alternates each point)
+      ballOwner: -1 // Which player currently owns the ball (-1 = no owner)
     };
     
     // WebSocket variables for gesture sharing
@@ -331,20 +337,16 @@
       oscillator.stop(audioContext.currentTime + duration);
     }
     
-    // Join Daily.js room with iframe (for video only)
+    // Join Daily.js room with iframe (for video only) - auto-startup
     async function joinDailyRoom() {
       try {
-        const dailyContainer = document.getElementById('daily-container');
         const dailyIframe = document.getElementById('daily-iframe');
-        
-        // Show the Daily.js iframe
-        dailyContainer.style.display = 'block';
         
         // Set the iframe source to the Daily.js room with muted mics
         dailyIframe.src = 'https://vcroom.daily.co/tennisfor4?layout=grid&showParticipantNames=true&showLeaveButton=true&startAudioOff=true';
         
         updateStatus('daily-status', 'Daily: Video Connected ✅', 'good');
-        console.log('✅ Joined Daily.js tennis room for video');
+        console.log('✅ Auto-joined Daily.js tennis room for video');
         
         // Initialize WebSocket for gesture data
         initializeWebSocket();
@@ -447,18 +449,22 @@
           handleGestureMessage(data);
           break;
         case 'ballHit':
-          // Synchronize ball state
-          gameState.ballVelocity = data.ballVelocity;
-          tennisBall.position.set(data.ballPosition.x, data.ballPosition.y, data.ballPosition.z);
-          gameState.ballSide = data.ballSide;
-          playSound(440, 0.2, 0.5);
-          console.log(`🎾 Received ball hit from Player ${data.playerId + 1}`);
+          // Synchronize ball state from other player
+          if (data.playerId !== myPlayerId) {
+            gameState.ballVelocity = data.ballVelocity;
+            tennisBall.position.set(data.ballPosition.x, data.ballPosition.y, data.ballPosition.z);
+            gameState.ballSide = data.ballSide;
+            gameState.ballOwner = data.ballOwner;
+            playSound(440, 0.2, 0.5);
+            console.log(`🎾 Received ball hit from Player ${data.playerId + 1}`);
+          }
           break;
         case 'ballUpdate':
-          // Continuous ball position sync
-          if (Math.abs(data.timestamp - Date.now()) < 500) { // Only sync recent updates
+          // Continuous ball position sync (only from ball owner)
+          if (data.playerId === gameState.ballOwner && data.playerId !== myPlayerId && Math.abs(data.timestamp - Date.now()) < 200) {
             tennisBall.position.set(data.ballPosition.x, data.ballPosition.y, data.ballPosition.z);
             gameState.ballVelocity = data.ballVelocity;
+            gameState.ballSide = data.ballSide;
           }
           break;
       }
@@ -538,6 +544,7 @@
           z: tennisBall.position.z
         },
         ballSide: gameState.ballSide,
+        ballOwner: gameState.ballOwner,
         playerId: myPlayerId,
         timestamp: Date.now()
       };
@@ -549,9 +556,10 @@
       }
     }
     
-    // Continuously sync ball position for all players
+    // Continuously sync ball position (only from ball owner)
     function broadcastBallUpdate() {
       if (!wsConnected || ws.readyState !== WebSocket.OPEN) return;
+      if (gameState.ballOwner !== myPlayerId) return; // Only ball owner broadcasts
       
       const ballUpdate = {
         type: 'ballUpdate',
@@ -561,6 +569,8 @@
           z: tennisBall.position.z
         },
         ballVelocity: gameState.ballVelocity,
+        ballSide: gameState.ballSide,
+        playerId: myPlayerId,
         timestamp: Date.now()
       };
       
@@ -1006,7 +1016,7 @@
       baseCameraPosition.y = Math.max(3, Math.min(7, baseCameraPosition.y));
     }
     
-    // Apply MediaPipe pose to player character
+    // Apply MediaPipe pose to player character with hand visibility check
     function applyPoseToPlayer(pose, player) {
       if (!pose || !player) return;
       
@@ -1017,7 +1027,21 @@
       const leftElbow = pose[13]; // Left elbow
       const leftShoulder = pose[11]; // Left shoulder
       
-      if (!wrist || !elbow || !shoulder) return;
+      // Check hand visibility - only apply if hands are clearly visible
+      const handsVisible = wrist && elbow && shoulder &&
+                          wrist.visibility > 0.7 && elbow.visibility > 0.7 && shoulder.visibility > 0.7;
+      
+      if (!handsVisible) {
+        // Update debug display
+        if (player.userData.playerId === myPlayerId) {
+          document.getElementById('hands-visible').textContent = 'No';
+        }
+        return; // Don't apply pose if hands not clearly visible
+      }
+      
+      if (player.userData.playerId === myPlayerId) {
+        document.getElementById('hands-visible').textContent = 'Yes';
+      }
       
       const bones = player.userData.bones;
       if (!bones) return;
@@ -1038,7 +1062,8 @@
       }
       
       // Apply left arm rotation for more realistic movement
-      if (bones.leftArm && leftWrist && leftElbow && leftShoulder) {
+      if (bones.leftArm && leftWrist && leftElbow && leftShoulder &&
+          leftWrist.visibility > 0.7 && leftElbow.visibility > 0.7 && leftShoulder.visibility > 0.7) {
         const leftArmAngleX = (leftWrist.y - leftShoulder.y) * 3;
         const leftArmAngleZ = -(leftWrist.x - leftShoulder.x) * 3; // Reverse Z for proper arm direction
         
@@ -1104,14 +1129,18 @@
       broadcastBallHit();
     }
     
-    // Update pose display
+    // Update pose display with debug data
     function updatePoseDisplay(pose) {
       const wrist = pose[16];
       const velocity = wrist ? Math.sqrt(wrist.x * wrist.x + wrist.y * wrist.y) : 0;
       
+      document.getElementById('my-player-id').textContent = `P${myPlayerId + 1}`;
       document.getElementById('swing-velocity').textContent = velocity.toFixed(3);
-      document.getElementById('ball-position').textContent = 
+      document.getElementById('ball-position').textContent =
         `${tennisBall.position.x.toFixed(1)}, ${tennisBall.position.y.toFixed(1)}, ${tennisBall.position.z.toFixed(1)}`;
+      document.getElementById('ball-side').textContent = gameState.ballSide === 1 ? 'P1 Side' : 'P2 Side';
+      document.getElementById('ball-owner').textContent = gameState.ballOwner === -1 ? 'None' : `P${gameState.ballOwner + 1}`;
+      document.getElementById('peer-count').textContent = Object.keys(connectedPlayers).length;
     }
     
     // Update ball physics - only bounce on ground, no automatic rebounds
