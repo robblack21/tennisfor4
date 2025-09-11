@@ -131,7 +131,7 @@
     <!-- Game HUD -->
     <div class="game-hud">
       <div class="score-display">
-        <div>Team 1: <span id="team1-score">0</span> | Team 2: <span id="team2-score">0</span></div>
+        <div>Player 1: <span id="team1-score">0</span> | Player 2: <span id="team2-score">0</span></div>
         <div>Game Status: <span id="game-status">Waiting for players</span></div>
       </div>
     </div>
@@ -181,16 +181,14 @@
         <strong>Pose Data:</strong><br>
         Swing: <span id="swing-velocity">-</span><br>
         Ball: <span id="ball-position">-</span><br>
-        Players: <span id="player-count">1</span>
+        Players: <span id="player-count">2</span>
       </div>
     </div>
     
     <!-- Player Indicators -->
     <div class="player-indicators">
-      <div class="player-indicator active">You</div>
-      <div class="player-indicator">P2</div>
-      <div class="player-indicator">P3</div>
-      <div class="player-indicator">P4</div>
+      <div class="player-indicator active">Player 1</div>
+      <div class="player-indicator">Player 2</div>
     </div>
   </div>
 
@@ -241,7 +239,7 @@
     // WebSocket variables for gesture sharing
     let ws = null;
     let wsConnected = false;
-    let myPlayerId = Math.floor(Math.random() * 4); // Random player ID 0-3
+    let myPlayerId = Math.floor(Math.random() * 2); // Random player ID 0-1 for 2 players
     let connectedPlayers = {};
     
     // Daily.js variables (for video only)
@@ -486,16 +484,16 @@
       const connectedCount = Object.keys(connectedPlayers).length + 1; // +1 for self
       document.getElementById('player-count').textContent = connectedCount;
       
-      // Update player indicators
+      // Update player indicators for 2 players
       const indicators = document.querySelectorAll('.player-indicator');
       indicators.forEach((indicator, index) => {
-        if (index < connectedCount || index === myPlayerId) {
+        if (index < 2) { // Only 2 players
           indicator.style.opacity = '1';
           if (index === myPlayerId) {
             indicator.classList.add('active');
+          } else {
+            indicator.classList.remove('active');
           }
-        } else {
-          indicator.style.opacity = '0.3';
         }
       });
     }
@@ -508,9 +506,9 @@
       scene = new THREE.Scene();
       scene.background = new THREE.Color(0x87CEEB);
       
-      // Create camera - Wii Sports style front-on view
-      camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-      camera.position.set(0, 5, 10); // Elevated and back for full court view
+      // Create camera - 2x zoomed Wii Sports view (FOV halved)
+      camera = new THREE.PerspectiveCamera(37.5, window.innerWidth / window.innerHeight, 0.1, 1000);
+      camera.position.set(0, 5, 10); // Elevated and back for focused court view
       camera.lookAt(0, 0, 0); // Look at center of court
       
       // Create renderer
@@ -613,13 +611,11 @@
       console.log('Large tennis ball created in center');
     }
     
-    // Create players - closer positions for zoomed view
+    // Create 2 players - one on each side of net
     function createPlayers() {
       const playerPositions = [
-        { x: -2.5, z: 3 },   // Player 1 (you) - closer to serve
-        { x: 2.5, z: 3 },    // Player 2
-        { x: -2.5, z: -3 },  // Player 3
-        { x: 2.5, z: -3 }    // Player 4
+        { x: 0, z: 3 },   // Player 1 (you) - team 1 side
+        { x: 0, z: -3 }   // Player 2 - team 2 side
       ];
       
       playerPositions.forEach((pos, index) => {
@@ -629,19 +625,17 @@
         players.push(player);
       });
       
-      console.log('Players created');
+      console.log('2 players created - singles tennis');
     }
     
     // Create individual player character with unique appearance
     function createPlayerCharacter(playerId) {
       const characterGroup = new THREE.Group();
       
-      // Player-specific colors and styles
+      // Player-specific colors and styles for 2 players
       const playerStyles = [
-        { body: 0x4CAF50, head: 0xFFE0BD, name: 'Green Player' },   // Player 0 - Green
-        { body: 0xFF5722, head: 0xFFDBB0, name: 'Red Player' },     // Player 1 - Red
-        { body: 0x2196F3, head: 0xFFE4C4, name: 'Blue Player' },    // Player 2 - Blue
-        { body: 0xFF9800, head: 0xFFE0BD, name: 'Orange Player' }   // Player 3 - Orange
+        { body: 0x4CAF50, head: 0xFFE0BD, name: 'Green Player' },   // Player 0 - Green (Team 1)
+        { body: 0xFF5722, head: 0xFFDBB0, name: 'Red Player' }      // Player 1 - Red (Team 2)
       ];
       
       const style = playerStyles[playerId] || playerStyles[0];
@@ -1042,7 +1036,7 @@
         gameState.team1Score++;
       }
       
-      console.log(`Team ${scoringTeam} scores!`);
+      console.log(`Player ${scoringTeam} scores!`);
       updateScore();
       resetBallToCenter();
     }
@@ -1065,11 +1059,11 @@
         gameWon(2);
       }
       
-      // Update game status
+      // Update game status for 2 players
       if (gameState.team1Sets >= 2) {
-        document.getElementById('game-status').textContent = 'Team 1 Wins Match!';
+        document.getElementById('game-status').textContent = 'Player 1 Wins Match!';
       } else if (gameState.team2Sets >= 2) {
-        document.getElementById('game-status').textContent = 'Team 2 Wins Match!';
+        document.getElementById('game-status').textContent = 'Player 2 Wins Match!';
       } else {
         document.getElementById('game-status').textContent =
           `Set ${gameState.team1Sets + gameState.team2Sets + 1} - Games: ${gameState.team1Games}-${gameState.team2Games}`;
@@ -1078,7 +1072,7 @@
     
     // Handle game win
     function gameWon(team) {
-      console.log(`🏆 Team ${team} wins the game!`);
+      console.log(`🏆 Player ${team} wins the game!`);
       
       if (team === 1) {
         gameState.team1Games++;
@@ -1100,7 +1094,7 @@
     
     // Handle set win
     function setWon(team) {
-      console.log(`🏆 Team ${team} wins the set!`);
+      console.log(`🏆 Player ${team} wins the set!`);
       
       if (team === 1) {
         gameState.team1Sets++;
@@ -1114,7 +1108,7 @@
       
       // Check for match win (best of 3 sets)
       if (gameState.team1Sets >= 2 || gameState.team2Sets >= 2) {
-        console.log(`🏆 Match complete! Team ${team} wins!`);
+        console.log(`🏆 Match complete! Player ${team} wins!`);
         gameState.isPlaying = false;
       }
     }
