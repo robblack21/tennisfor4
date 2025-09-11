@@ -124,9 +124,61 @@
     .player-indicator.active {
       background: rgba(255,127,39,0.8);
     }
+    
+    .countdown-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 0, 0, 0.9);
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      z-index: 1000;
+      color: white;
+      font-family: Arial, sans-serif;
+    }
+    
+    .countdown-number {
+      font-size: 120px;
+      font-weight: bold;
+      color: #22b14c;
+      text-shadow: 4px 4px 8px rgba(0,0,0,0.8);
+      margin-bottom: 20px;
+      animation: pulse 1s ease-in-out;
+    }
+    
+    .countdown-text {
+      font-size: 24px;
+      color: #FFF;
+      text-align: center;
+      margin-bottom: 10px;
+    }
+    
+    .countdown-subtext {
+      font-size: 16px;
+      color: #CCC;
+      text-align: center;
+    }
+    
+    @keyframes pulse {
+      0% { transform: scale(1); opacity: 0.8; }
+      50% { transform: scale(1.1); opacity: 1; }
+      100% { transform: scale(1); opacity: 0.8; }
+    }
   </style>
 </head>
 <body>
+  <!-- Countdown Overlay -->
+  <div id="countdown-overlay" class="countdown-overlay">
+    <div class="countdown-text">🎾 Tennis for 2</div>
+    <div id="countdown-number" class="countdown-number">5</div>
+    <div class="countdown-subtext">Syncing multiplayer state...</div>
+    <div class="countdown-subtext">Preparing for 2-player tennis!</div>
+  </div>
+
   <div class="ui-overlay">
     <!-- Game HUD -->
     <div class="game-hud">
@@ -575,8 +627,8 @@
       scene = new THREE.Scene();
       scene.background = new THREE.Color(0x87CEEB);
       
-      // Create camera - 2x zoomed Wii Sports view (FOV halved)
-      camera = new THREE.PerspectiveCamera(37.5, window.innerWidth / window.innerHeight, 0.1, 1000);
+      // Create camera - wider tennis view (66% wider FOV)
+      camera = new THREE.PerspectiveCamera(62.25, window.innerWidth / window.innerHeight, 0.1, 1000);
       camera.position.set(0, 5, 10); // Elevated and back for focused court view
       camera.lookAt(0, 0, 0); // Look at center of court
       
@@ -680,21 +732,22 @@
       console.log('Large tennis ball created in center');
     }
     
-    // Create 2 players - one on each side of net
+    // Create 2 players - one on each side of net, facing each other
     function createPlayers() {
       const playerPositions = [
-        { x: 0, z: 3 },   // Player 1 (you) - team 1 side
-        { x: 0, z: -3 }   // Player 2 - team 2 side
+        { x: 0, z: 3, rotation: 0 },     // Player 1 - team 1 side, facing toward net
+        { x: 0, z: -3, rotation: Math.PI } // Player 2 - team 2 side, facing toward net
       ];
       
       playerPositions.forEach((pos, index) => {
         const player = createPlayerCharacter(index);
         player.position.set(pos.x, 0, pos.z);
+        player.rotation.y = pos.rotation; // Face toward net/opponent
         scene.add(player);
         players.push(player);
       });
       
-      console.log('2 players created - singles tennis');
+      console.log('2 tennis players created - facing net for ball contact');
     }
     
     // Create individual player character with unique appearance
@@ -1312,8 +1365,33 @@
     // Initialize everything
     init();
     
-    // Auto-setup everything when script loads
-    setTimeout(async () => {
+    // Show countdown before starting
+    function startCountdown() {
+      const overlay = document.getElementById('countdown-overlay');
+      const numberElement = document.getElementById('countdown-number');
+      let count = 5;
+      
+      const countdownInterval = setInterval(() => {
+        count--;
+        if (count > 0) {
+          numberElement.textContent = count;
+          console.log(`⏰ Tennis Countdown: ${count}`);
+        } else {
+          numberElement.textContent = 'START!';
+          setTimeout(() => {
+            overlay.style.display = 'none';
+            console.log('🚀 Tennis countdown complete - starting tennis experience...');
+            
+            // Start auto-setup after countdown
+            startTennisExperience();
+          }, 1000);
+          clearInterval(countdownInterval);
+        }
+      }, 1000);
+    }
+    
+    // Auto-setup everything after countdown
+    async function startTennisExperience() {
       console.log('🚀 Auto-starting tennis experience...');
       
       // Setup MediaPipe first
@@ -1321,15 +1399,19 @@
       
       // Auto-enable all features for seamless experience
       setTimeout(() => {
-        console.log('🚀 Auto-joining multiplayer...');
+        console.log('🚀 Auto-joining tennis multiplayer...');
         joinDailyRoom();
-      }, 2000);
+      }, 1000);
       
       setTimeout(() => {
         console.log('🚀 Auto-starting camera and pose tracking...');
         startCamera();
-      }, 3000);
-      
+      }, 2000);
+    }
+    
+    // Start countdown when page loads
+    setTimeout(() => {
+      startCountdown();
     }, 1000);
     
     // Clean up on page unload

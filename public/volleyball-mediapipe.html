@@ -283,7 +283,7 @@
     let currentPose = null;
     let lastSpike = 0;
     let cameraTime = 0;
-    let baseCameraPosition = { x: 0, y: 8, z: 8 }; // 33% closer to court
+    let baseCameraPosition = { x: 0, y: 8, z: 12 }; // 1.5x farther back from court
     
     let gameState = {
       ballPosition: { x: 0, y: 2, z: 0 },
@@ -618,9 +618,9 @@
       scene = new THREE.Scene();
       scene.background = new THREE.Color(0x87CEEB);
       
-      // Create camera - wider volleyball court view (0.66x current FOV = 24.75°, 33% closer)
+      // Create camera - volleyball court view (moved back 1.5x)
       camera = new THREE.PerspectiveCamera(24.75, window.innerWidth / window.innerHeight, 0.1, 1000);
-      camera.position.set(0, 8, 8); // 33% closer to court (was 12, now 8)
+      camera.position.set(0, 8, 12); // 1.5x farther back from court
       camera.lookAt(0, 2, 0);
       
       renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -726,32 +726,33 @@
       console.log('Visible volleyball created in center');
     }
     
-    // Create 10 volleyball players in X-formation (5 per side)
+    // Create 10 volleyball players in X-formation (5 per side), facing net
     function createVolleyballPlayers() {
       const playerPositions = [
-        // Team 1 (front side) - X-formation
-        { x: -2.5, z: 3.5 },  // P1 - top left
-        { x: 2.5, z: 3.5 },   // P2 - top right
-        { x: 0, z: 2.5 },     // P3 - center
-        { x: -2.5, z: 1.5 },  // P4 - bottom left
-        { x: 2.5, z: 1.5 },   // P5 - bottom right
+        // Team 1 (front side) - X-formation, facing toward net (rotation 0)
+        { x: -2.5, z: 3.5, rotation: 0 },  // P1 - top left
+        { x: 2.5, z: 3.5, rotation: 0 },   // P2 - top right
+        { x: 0, z: 2.5, rotation: 0 },     // P3 - center
+        { x: -2.5, z: 1.5, rotation: 0 },  // P4 - bottom left
+        { x: 2.5, z: 1.5, rotation: 0 },   // P5 - bottom right
         
-        // Team 2 (back side) - X-formation
-        { x: -2.5, z: -3.5 }, // P6 - top left
-        { x: 2.5, z: -3.5 },  // P7 - top right
-        { x: 0, z: -2.5 },    // P8 - center
-        { x: -2.5, z: -1.5 }, // P9 - bottom left
-        { x: 2.5, z: -1.5 }   // P10 - bottom right
+        // Team 2 (back side) - X-formation, facing toward net (rotation 180°)
+        { x: -2.5, z: -3.5, rotation: Math.PI }, // P6 - top left
+        { x: 2.5, z: -3.5, rotation: Math.PI },  // P7 - top right
+        { x: 0, z: -2.5, rotation: Math.PI },    // P8 - center
+        { x: -2.5, z: -1.5, rotation: Math.PI }, // P9 - bottom left
+        { x: 2.5, z: -1.5, rotation: Math.PI }   // P10 - bottom right
       ];
       
       playerPositions.forEach((pos, index) => {
         const player = createVolleyballPlayer(index);
         player.position.set(pos.x, 0, pos.z);
+        player.rotation.y = pos.rotation; // Face toward net for ball contact
         scene.add(player);
         players.push(player);
       });
       
-      console.log('10 volleyball players created in X-formation (5 per side)');
+      console.log('10 volleyball players created in X-formation - facing net for ball contact');
     }
     
     // Create individual volleyball player with unique appearance
