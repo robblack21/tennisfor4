@@ -222,6 +222,8 @@
     let poseTrackingActive = false;
     let currentPose = null;
     let lastSwingTime = 0;
+    let cameraTime = 0; // For cinematic camera movement
+    let baseCameraPosition = { x: 0, y: 5, z: 10 }; // Base camera position
     let gameState = {
       ballPosition: { x: 0, y: 1.5, z: 2 },
       ballVelocity: { x: 0, y: 0, z: 0 },
@@ -864,6 +866,9 @@
                 applyPoseToPlayer(currentPose, players[myPlayerId]);
               }
               
+              // Apply head tracking for camera movement
+              applyHeadTrackingToCamera(currentPose);
+              
               // Broadcast pose data to other players
               broadcastPoseData(currentPose);
               
@@ -881,6 +886,33 @@
       };
       
       detectPose();
+    }
+    
+    // Apply head tracking for immersive camera movement
+    function applyHeadTrackingToCamera(pose) {
+      if (!pose) return;
+      
+      const nose = pose[0]; // Nose landmark
+      const leftEye = pose[2]; // Left eye
+      const rightEye = pose[5]; // Right eye
+      
+      if (!nose || !leftEye || !rightEye) return;
+      
+      // Calculate head position and rotation
+      const headCenterX = (leftEye.x + rightEye.x) / 2;
+      const headCenterY = (leftEye.y + rightEye.y) / 2;
+      
+      // Map head movement to camera movement (subtle)
+      const headOffsetX = (headCenterX - 0.5) * 2; // -1 to 1 range
+      const headOffsetY = (headCenterY - 0.5) * 2; // -1 to 1 range
+      
+      // Apply head tracking to camera base position
+      baseCameraPosition.x = headOffsetX * 1.5; // Subtle left-right movement
+      baseCameraPosition.y = 5 - (headOffsetY * 1); // Subtle up-down movement
+      
+      // Limit camera movement range
+      baseCameraPosition.x = Math.max(-3, Math.min(3, baseCameraPosition.x));
+      baseCameraPosition.y = Math.max(3, Math.min(7, baseCameraPosition.y));
     }
     
     // Apply MediaPipe pose to player character
@@ -908,7 +940,7 @@
       // Apply right arm rotation
       if (bones.rightArm) {
         const armAngleX = (wrist.y - shoulder.y) * 3;
-        const armAngleZ = (wrist.x - shoulder.x) * 3;
+        const armAngleZ = -(wrist.x - shoulder.x) * 3; // Reverse Z for proper arm direction
         
         bones.rightArm.rotation.x = armAngleX;
         bones.rightArm.rotation.z = armAngleZ;
@@ -917,7 +949,7 @@
       // Apply left arm rotation for more realistic movement
       if (bones.leftArm && leftWrist && leftElbow && leftShoulder) {
         const leftArmAngleX = (leftWrist.y - leftShoulder.y) * 3;
-        const leftArmAngleZ = (leftWrist.x - leftShoulder.x) * 3;
+        const leftArmAngleZ = -(leftWrist.x - leftShoulder.x) * 3; // Reverse Z for proper arm direction
         
         bones.leftArm.rotation.x = leftArmAngleX;
         bones.leftArm.rotation.z = leftArmAngleZ;
@@ -944,21 +976,22 @@
       // Determine target side based on current ball position
       let targetZ;
       if (gameState.ballSide === 1) {
-        // Ball on team 1 side, send to team 2 side
+        // Ball on player 1 side, send to player 2 side
         targetZ = -3;
         gameState.ballSide = -1;
       } else {
-        // Ball on team 2 side, send to team 1 side
+        // Ball on player 2 side, send to player 1 side
         targetZ = 3;
         gameState.ballSide = 1;
       }
       
-      // Simple ball trajectory to other side
-      gameState.ballVelocity.x = (Math.random() - 0.5) * 2; // Small random x movement
-      gameState.ballVelocity.y = 2; // Arc over net
-      gameState.ballVelocity.z = (targetZ - tennisBall.position.z) * 2; // Toward target
+      // Parabolic ball trajectory with higher arc
+      const distance = Math.abs(targetZ - tennisBall.position.z);
+      gameState.ballVelocity.x = (Math.random() - 0.5) * 1; // Slight random x movement
+      gameState.ballVelocity.y = 4 + (distance * 0.5); // Higher parabolic arc
+      gameState.ballVelocity.z = (targetZ - tennisBall.position.z) * 1.5; // Toward target
       
-      console.log(`🎾 Player ${playerId + 1} hit ball to ${gameState.ballSide === 1 ? 'Team 1' : 'Team 2'} side!`);
+      console.log(`🎾 Player ${playerId + 1} hit ball to Player ${gameState.ballSide === 1 ? '1' : '2'} side!`);
       
       // Play ball hit sound
       playSound(440, 0.2, 0.5);
@@ -992,26 +1025,32 @@
       // Ground bounce - higher for large ball
       if (tennisBall.position.y <= 0.4) {
         tennisBall.position.y = 0.4;
-        gameState.ballVelocity.y = Math.abs(gameState.ballVelocity.y) * 0.7;
-        gameState.ballVelocity.x *= 0.8;
-        gameState.ballVelocity.z *= 0.8;
+        gameState.ballVelocity.y = Math.abs(gameState.ballVelocity.y) * 0.6;
+        gameState.ballVelocity.x *= 0.9;
+        gameState.ballVelocity.z *= 0.9;
         
         // Play bounce sound
         playSound(330, 0.1, 0.2);
         
         // Check if ball missed (went too far on either side)
-        if (Math.abs(tennisBall.position.z) > 5) {
+        if (Math.abs(tennisBall.position.z) > 4.5) {
+          console.log('🎾 Ball out of bounds! Scoring...');
           handleBallMiss();
+          return;
         }
       }
       
       // Court bounds - score points if ball goes out
-      if (Math.abs(tennisBall.position.x) > 12) {
+      if (Math.abs(tennisBall.position.x) > 8) {
+        console.log('🎾 Ball out of bounds sideline!');
         handleBallMiss();
+        return;
       }
       
-      if (Math.abs(tennisBall.position.z) > 6) {
+      if (Math.abs(tennisBall.position.z) > 5.5) {
+        console.log('🎾 Ball out of bounds baseline!');
         handleBallMiss();
+        return;
       }
       
       // Reset ball if it goes too high
@@ -1020,25 +1059,29 @@
       }
     }
     
-    // Handle ball miss and scoring
+    // Handle ball miss and scoring with better logic
     function handleBallMiss() {
       console.log('🎾 Ball missed! Scoring point...');
       
-      // Determine which team gets the point
-      let scoringTeam;
-      if (gameState.ballSide === 1) {
-        // Ball was on team 1 side, so team 2 scores
-        scoringTeam = 2;
+      // Determine which player gets the point based on ball position
+      let scoringPlayer;
+      if (tennisBall.position.z > 0) {
+        // Ball went out on player 1's side, so player 2 scores
+        scoringPlayer = 2;
         gameState.team2Score++;
       } else {
-        // Ball was on team 2 side, so team 1 scores
-        scoringTeam = 1;
+        // Ball went out on player 2's side, so player 1 scores
+        scoringPlayer = 1;
         gameState.team1Score++;
       }
       
-      console.log(`Player ${scoringTeam} scores!`);
+      console.log(`🏆 Player ${scoringPlayer} scores! New score: ${gameState.team1Score}-${gameState.team2Score}`);
       updateScore();
-      resetBallToCenter();
+      
+      // Add delay before resetting ball
+      setTimeout(() => {
+        resetBallToCenter();
+      }, 1000);
     }
     
     // Update tennis scoring display
@@ -1157,8 +1200,30 @@
       // Update ball physics
       updateBallPhysics();
       
-      // Keep camera fixed in Wii Sports position - symmetric court view
-      camera.lookAt(0, 0, 0);
+      // Cinematic camera movement with gentle squirrel motion
+      cameraTime += 0.01;
+      
+      // Gentle camera movement around base position
+      const cameraOffset = {
+        x: Math.sin(cameraTime * 0.3) * 0.5, // Gentle side-to-side
+        y: Math.sin(cameraTime * 0.2) * 0.2, // Subtle up-down
+        z: Math.cos(cameraTime * 0.1) * 0.3  // Forward-back motion
+      };
+      
+      camera.position.set(
+        baseCameraPosition.x + cameraOffset.x,
+        baseCameraPosition.y + cameraOffset.y,
+        baseCameraPosition.z + cameraOffset.z
+      );
+      
+      // Look at center with slight movement
+      const lookAtOffset = {
+        x: Math.sin(cameraTime * 0.4) * 0.2,
+        y: 0,
+        z: Math.cos(cameraTime * 0.3) * 0.1
+      };
+      
+      camera.lookAt(lookAtOffset.x, lookAtOffset.y, lookAtOffset.z);
       
       // Render
       renderer.render(scene, camera);
