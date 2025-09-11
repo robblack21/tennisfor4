@@ -225,11 +225,17 @@
     let currentPose = null;
     let lastSwingTime = 0;
     let gameState = {
-      ballPosition: { x: 0, y: 1, z: 0 },
+      ballPosition: { x: 0, y: 1.5, z: 2 },
       ballVelocity: { x: 0, y: 0, z: 0 },
       team1Score: 0,
       team2Score: 0,
-      isPlaying: false
+      team1Games: 0,
+      team2Games: 0,
+      team1Sets: 0,
+      team2Sets: 0,
+      isPlaying: true,
+      currentServer: 0, // Player ID of current server
+      ballSide: 1 // 1 = team 1 side, -1 = team 2 side
     };
     
     // WebSocket variables for gesture sharing
@@ -502,10 +508,10 @@
       scene = new THREE.Scene();
       scene.background = new THREE.Color(0x87CEEB);
       
-      // Create camera - zoomed in closer to court
+      // Create camera - Wii Sports style front-on view
       camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-      camera.position.set(0, 6, 8);
-      camera.lookAt(0, 1, 0);
+      camera.position.set(0, 5, 10); // Elevated and back for full court view
+      camera.lookAt(0, 0, 0); // Look at center of court
       
       // Create renderer
       renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -593,18 +599,18 @@
       }
     }
     
-    // Create tennis ball - positioned near Player 1
+    // Create tennis ball - large and visible
     function createTennisBall() {
-      const ballGeometry = new THREE.SphereGeometry(0.04); // Slightly larger ball
+      const ballGeometry = new THREE.SphereGeometry(0.4); // 10x bigger ball
       const ballMaterial = new THREE.MeshLambertMaterial({ color: 0xFFFF00 });
       tennisBall = new THREE.Mesh(ballGeometry, ballMaterial);
       
-      // Position ball near Player 1 (index 0) for easy hitting
-      tennisBall.position.set(-2, 1.2, 3.5); // Close to player 1's position
+      // Position ball in center at good height for hitting
+      tennisBall.position.set(0, 1.5, 2); // Center court, elevated
       tennisBall.castShadow = true;
       scene.add(tennisBall);
       
-      console.log('Tennis ball created near Player 1');
+      console.log('Large tennis ball created in center');
     }
     
     // Create players - closer positions for zoomed view
@@ -936,32 +942,35 @@
       }
     }
     
-    // Hit ball if player is close enough
+    // Ultra-simplified tennis: wave arm to send ball to other side
     function hitBallIfNearby(player, swingPower) {
-      const playerPos = player.position;
-      const ballPos = tennisBall.position;
+      // Simplified: any swing motion sends ball to opposite side
+      const playerId = player.userData.playerId;
       
-      const distance = playerPos.distanceTo(ballPos);
-      
-      if (distance < 1.5) { // Closer hitting range for easier gameplay
-        // Calculate hit direction
-        const hitDirection = new THREE.Vector3()
-          .subVectors(ballPos, playerPos)
-          .normalize();
-        
-        // Apply velocity based on swing power
-        gameState.ballVelocity.x = hitDirection.x * swingPower * 8;
-        gameState.ballVelocity.y = 3 + swingPower * 2;
-        gameState.ballVelocity.z = hitDirection.z * swingPower * 8;
-        
-        console.log('🎾 Ball hit!', gameState.ballVelocity);
-        
-        // Play ball hit sound
-        playSound(440, 0.2, 0.5);
-        
-        // Broadcast ball hit to other players
-        broadcastBallHit();
+      // Determine target side based on current ball position
+      let targetZ;
+      if (gameState.ballSide === 1) {
+        // Ball on team 1 side, send to team 2 side
+        targetZ = -3;
+        gameState.ballSide = -1;
+      } else {
+        // Ball on team 2 side, send to team 1 side
+        targetZ = 3;
+        gameState.ballSide = 1;
       }
+      
+      // Simple ball trajectory to other side
+      gameState.ballVelocity.x = (Math.random() - 0.5) * 2; // Small random x movement
+      gameState.ballVelocity.y = 2; // Arc over net
+      gameState.ballVelocity.z = (targetZ - tennisBall.position.z) * 2; // Toward target
+      
+      console.log(`🎾 Player ${playerId + 1} hit ball to ${gameState.ballSide === 1 ? 'Team 1' : 'Team 2'} side!`);
+      
+      // Play ball hit sound
+      playSound(440, 0.2, 0.5);
+      
+      // Broadcast ball hit to other players
+      broadcastBallHit();
     }
     
     // Update pose display
@@ -986,48 +995,156 @@
       tennisBall.position.y += gameState.ballVelocity.y * dt;
       tennisBall.position.z += gameState.ballVelocity.z * dt;
       
-      // Ground bounce
-      if (tennisBall.position.y <= 0.033) {
-        tennisBall.position.y = 0.033;
+      // Ground bounce - higher for large ball
+      if (tennisBall.position.y <= 0.4) {
+        tennisBall.position.y = 0.4;
         gameState.ballVelocity.y = Math.abs(gameState.ballVelocity.y) * 0.7;
         gameState.ballVelocity.x *= 0.8;
         gameState.ballVelocity.z *= 0.8;
         
         // Play bounce sound
         playSound(330, 0.1, 0.2);
+        
+        // Check if ball missed (went too far on either side)
+        if (Math.abs(tennisBall.position.z) > 5) {
+          handleBallMiss();
+        }
       }
       
-      // Court bounds
+      // Court bounds - score points if ball goes out
       if (Math.abs(tennisBall.position.x) > 12) {
-        gameState.ballVelocity.x *= -0.8;
-        tennisBall.position.x = Math.sign(tennisBall.position.x) * 11.5;
+        handleBallMiss();
       }
       
       if (Math.abs(tennisBall.position.z) > 6) {
-        gameState.ballVelocity.z *= -0.8;
-        tennisBall.position.z = Math.sign(tennisBall.position.z) * 5.5;
+        handleBallMiss();
       }
       
-      // Reset ball if it goes too high or low
-      if (tennisBall.position.y > 20 || tennisBall.position.y < -5) {
-        resetBall();
+      // Reset ball if it goes too high
+      if (tennisBall.position.y > 20) {
+        resetBallToCenter();
       }
     }
     
-    // Reset ball position
-    function resetBall() {
-      tennisBall.position.set(0, 2, 0);
+    // Handle ball miss and scoring
+    function handleBallMiss() {
+      console.log('🎾 Ball missed! Scoring point...');
+      
+      // Determine which team gets the point
+      let scoringTeam;
+      if (gameState.ballSide === 1) {
+        // Ball was on team 1 side, so team 2 scores
+        scoringTeam = 2;
+        gameState.team2Score++;
+      } else {
+        // Ball was on team 2 side, so team 1 scores
+        scoringTeam = 1;
+        gameState.team1Score++;
+      }
+      
+      console.log(`Team ${scoringTeam} scores!`);
+      updateScore();
+      resetBallToCenter();
+    }
+    
+    // Update tennis scoring display
+    function updateScore() {
+      const scoreNames = ['0', '15', '30', '40'];
+      
+      // Convert numeric scores to tennis scores
+      const team1Display = gameState.team1Score < 4 ? scoreNames[gameState.team1Score] : 'GAME';
+      const team2Display = gameState.team2Score < 4 ? scoreNames[gameState.team2Score] : 'GAME';
+      
+      document.getElementById('team1-score').textContent = team1Display;
+      document.getElementById('team2-score').textContent = team2Display;
+      
+      // Check for game win (first to 4 points with 2-point lead)
+      if (gameState.team1Score >= 4 && gameState.team1Score - gameState.team2Score >= 2) {
+        gameWon(1);
+      } else if (gameState.team2Score >= 4 && gameState.team2Score - gameState.team1Score >= 2) {
+        gameWon(2);
+      }
+      
+      // Update game status
+      if (gameState.team1Sets >= 2) {
+        document.getElementById('game-status').textContent = 'Team 1 Wins Match!';
+      } else if (gameState.team2Sets >= 2) {
+        document.getElementById('game-status').textContent = 'Team 2 Wins Match!';
+      } else {
+        document.getElementById('game-status').textContent =
+          `Set ${gameState.team1Sets + gameState.team2Sets + 1} - Games: ${gameState.team1Games}-${gameState.team2Games}`;
+      }
+    }
+    
+    // Handle game win
+    function gameWon(team) {
+      console.log(`🏆 Team ${team} wins the game!`);
+      
+      if (team === 1) {
+        gameState.team1Games++;
+      } else {
+        gameState.team2Games++;
+      }
+      
+      // Reset point scores
+      gameState.team1Score = 0;
+      gameState.team2Score = 0;
+      
+      // Check for set win (first to 2 games)
+      if (gameState.team1Games >= 2) {
+        setWon(1);
+      } else if (gameState.team2Games >= 2) {
+        setWon(2);
+      }
+    }
+    
+    // Handle set win
+    function setWon(team) {
+      console.log(`🏆 Team ${team} wins the set!`);
+      
+      if (team === 1) {
+        gameState.team1Sets++;
+      } else {
+        gameState.team2Sets++;
+      }
+      
+      // Reset game scores
+      gameState.team1Games = 0;
+      gameState.team2Games = 0;
+      
+      // Check for match win (best of 3 sets)
+      if (gameState.team1Sets >= 2 || gameState.team2Sets >= 2) {
+        console.log(`🏆 Match complete! Team ${team} wins!`);
+        gameState.isPlaying = false;
+      }
+    }
+    
+    // Reset ball to center position
+    function resetBallToCenter() {
+      tennisBall.position.set(0, 1.5, 0); // Center court, elevated
       gameState.ballVelocity = { x: 0, y: 0, z: 0 };
+      gameState.ballSide = Math.random() > 0.5 ? 1 : -1; // Random starting side
+    }
+    
+    // Reset ball position (legacy function)
+    function resetBall() {
+      resetBallToCenter();
     }
     
     // Reset game
     function resetGame() {
-      resetBall();
+      resetBallToCenter();
       gameState.team1Score = 0;
       gameState.team2Score = 0;
+      gameState.team1Games = 0;
+      gameState.team2Games = 0;
+      gameState.team1Sets = 0;
+      gameState.team2Sets = 0;
+      gameState.isPlaying = true;
+      
       document.getElementById('team1-score').textContent = '0';
       document.getElementById('team2-score').textContent = '0';
-      document.getElementById('game-status').textContent = 'Game Reset';
+      document.getElementById('game-status').textContent = 'New Match Started';
     }
     
     // Toggle fullscreen
@@ -1046,9 +1163,8 @@
       // Update ball physics
       updateBallPhysics();
       
-      // Update camera to follow ball
-      const ballPos = tennisBall.position;
-      camera.lookAt(ballPos.x, ballPos.y + 2, ballPos.z);
+      // Keep camera fixed in Wii Sports position - symmetric court view
+      camera.lookAt(0, 0, 0);
       
       // Render
       renderer.render(scene, camera);
