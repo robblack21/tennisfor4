@@ -1,0 +1,1258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Volleyball for 10 - MediaPipe Edition</title>
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+      font-family: 'Arial', sans-serif;
+      background: linear-gradient(135deg, #FF6B35, #F7931E);
+    }
+    
+    .ui-overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      z-index: 100;
+    }
+    
+    .game-hud {
+      position: absolute;
+      top: 20px;
+      left: 20px;
+      color: white;
+      text-shadow: 2px 2px 4px rgba(0,0,0,0.8);
+      pointer-events: auto;
+    }
+    
+    .score-display {
+      background: rgba(0,0,0,0.6);
+      padding: 15px;
+      border-radius: 10px;
+      font-size: 18px;
+      font-weight: bold;
+      margin-bottom: 10px;
+    }
+    
+    .controls-panel {
+      position: absolute;
+      top: 20px;
+      right: 20px;
+      background: rgba(0,0,0,0.8);
+      color: white;
+      padding: 20px;
+      border-radius: 10px;
+      pointer-events: auto;
+      max-width: 300px;
+    }
+    
+    .video-container {
+      width: 100%;
+      height: 150px;
+      background: #333;
+      border-radius: 5px;
+      margin: 10px 0;
+      position: relative;
+    }
+    
+    video {
+      width: 100%;
+      height: 100%;
+      border-radius: 5px;
+    }
+    
+    button {
+      background: #FF6B35;
+      color: white;
+      border: none;
+      padding: 8px 15px;
+      border-radius: 5px;
+      cursor: pointer;
+      margin: 3px;
+      font-weight: bold;
+      font-size: 12px;
+    }
+    
+    button:hover {
+      background: #FF8C69;
+    }
+    
+    .status {
+      padding: 5px;
+      margin: 3px 0;
+      border-radius: 3px;
+      font-size: 12px;
+    }
+    
+    .status.good { background: rgba(0,255,0,0.2); }
+    .status.warn { background: rgba(255,255,0,0.2); }
+    .status.error { background: rgba(255,0,0,0.2); }
+    
+    .pose-data {
+      background: rgba(0,0,0,0.3);
+      padding: 8px;
+      border-radius: 5px;
+      margin: 5px 0;
+      font-size: 10px;
+    }
+    
+    .player-indicators {
+      position: absolute;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      gap: 5px;
+      pointer-events: auto;
+    }
+    
+    .player-indicator {
+      background: rgba(0,0,0,0.6);
+      color: white;
+      padding: 3px 8px;
+      border-radius: 5px;
+      font-size: 10px;
+      text-align: center;
+    }
+    
+    .player-indicator.active {
+      background: rgba(255,107,53,0.8);
+    }
+  </style>
+</head>
+<body>
+  <div class="ui-overlay">
+    <!-- Game HUD -->
+    <div class="game-hud">
+      <div class="score-display">
+        <div>Team 1: <span id="team1-score">0</span> | Team 2: <span id="team2-score">0</span></div>
+        <div>Game Status: <span id="game-status">Volleyball Ready</span></div>
+      </div>
+    </div>
+    
+    <!-- MediaPipe Controls -->
+    <div class="controls-panel">
+      <h3>🏐 MediaPipe Volleyball</h3>
+      
+      <div style="display: flex; flex-wrap: wrap;">
+        <button onclick="startCamera()">Start Camera</button>
+        <button onclick="togglePoseTracking()">Toggle Pose</button>
+        <button onclick="joinDailyRoom()">Join Multiplayer</button>
+        <button onclick="resetGame()">Reset Game</button>
+        <button onclick="toggleFullscreen()">Fullscreen</button>
+      </div>
+      
+      <!-- Daily.js Video Call Interface -->
+      <div id="daily-container" style="display: none;">
+        <div style="margin: 10px 0; font-size: 12px; color: #ccc;">
+          Multiplayer Video Call:
+        </div>
+        <iframe
+          id="daily-iframe"
+          width="100%"
+          height="200"
+          style="border-radius: 8px; border: none;"
+          allow="camera; microphone; fullscreen; display-capture; autoplay">
+        </iframe>
+      </div>
+      
+      <!-- MediaPipe Camera (for pose tracking) -->
+      <div class="video-container">
+        <div style="font-size: 11px; color: #ccc; margin-bottom: 5px;">
+          Pose Tracking Camera:
+        </div>
+        <video id="webcam" autoplay muted playsinline></video>
+      </div>
+      
+      <div id="status-container">
+        <div class="status" id="camera-status">Camera: Not started</div>
+        <div class="status" id="mediapipe-status">MediaPipe: Loading...</div>
+        <div class="status" id="daily-status">Daily: Not connected</div>
+        <div class="status" id="game-status-detail">Game: Ready</div>
+      </div>
+      
+      <div class="pose-data">
+        <strong>Pose Data:</strong><br>
+        Spike: <span id="swing-velocity">-</span><br>
+        Ball: <span id="ball-position">-</span><br>
+        Players: <span id="player-count">10</span>
+      </div>
+    </div>
+    
+    <!-- Player Indicators -->
+    <div class="player-indicators">
+      <div class="player-indicator">P1</div>
+      <div class="player-indicator">P2</div>
+      <div class="player-indicator">P3</div>
+      <div class="player-indicator">P4</div>
+      <div class="player-indicator active">P5</div>
+      <div class="player-indicator">P6</div>
+      <div class="player-indicator">P7</div>
+      <div class="player-indicator">P8</div>
+      <div class="player-indicator">P9</div>
+      <div class="player-indicator">P10</div>
+    </div>
+  </div>
+
+  <!-- Load Three.js and GLTFLoader -->
+  <script src="lib/three.min.js"></script>
+  <script src="lib/GLTFLoader.js"></script>
+  
+  <!-- Load Daily.js -->
+  <script crossorigin src="https://unpkg.com/@daily-co/daily-js@0.64.0/dist/daily-iframe.js"></script>
+  
+  <!-- Load MediaPipe -->
+  <script type="module">
+    try {
+      const vision = await import('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/vision_bundle.js');
+      window.TasksVision = vision;
+      console.log('MediaPipe loaded successfully');
+      updateStatus('mediapipe-status', 'MediaPipe: Ready ✅', 'good');
+    } catch (error) {
+      console.warn('MediaPipe not available:', error);
+      updateStatus('mediapipe-status', 'MediaPipe: Failed ❌', 'error');
+    }
+  </script>
+  
+  <script>
+    // Global variables
+    let scene, camera, renderer;
+    let volleyballCourt, volleyball;
+    let players = [];
+    let poseLandmarker;
+    let webcamRunning = false;
+    let poseTrackingActive = false;
+    let currentPose = null;
+    let lastSpike = 0;
+    let cameraTime = 0;
+    let baseCameraPosition = { x: 0, y: 8, z: 12 };
+    
+    let gameState = {
+      ballPosition: { x: 0, y: 2, z: 0 },
+      ballVelocity: { x: 0, y: 0, z: 0 },
+      team1Score: 0,
+      team2Score: 0,
+      team1Sets: 0,
+      team2Sets: 0,
+      isPlaying: true,
+      ballSide: 1, // 1 = team 1 side, -1 = team 2 side
+      targetPositions: [] // Pre-calculated volleyball trajectories
+    };
+    
+    // WebSocket variables for gesture sharing
+    let ws = null;
+    let wsConnected = false;
+    let myPlayerId = Math.floor(Math.random() * 10); // Random player ID 0-9
+    let connectedPlayers = {};
+    
+    // Daily.js variables (for video only)
+    let callObject = null;
+    let localParticipant = null;
+    
+    // Audio variables
+    let audioContext;
+    let backgroundMusic;
+    let audioInitialized = false;
+    
+    // Update status function
+    function updateStatus(elementId, text, className) {
+      const element = document.getElementById(elementId);
+      if (element) {
+        element.textContent = text;
+        element.className = 'status ' + (className || '');
+      }
+    }
+    
+    // Initialize audio context and sounds
+    async function initializeAudio() {
+      if (audioInitialized) return;
+      
+      try {
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        createBackgroundMusic();
+        audioInitialized = true;
+        console.log('✅ Audio initialized');
+      } catch (error) {
+        console.error('Audio initialization failed:', error);
+      }
+    }
+    
+    // Create procedural background music
+    function createBackgroundMusic() {
+      const oscillator = audioContext.createOscillator();
+      const gainNode = audioContext.createGain();
+      
+      oscillator.connect(gainNode);
+      gainNode.connect(audioContext.destination);
+      
+      oscillator.frequency.setValueAtTime(180, audioContext.currentTime); // Lower for volleyball
+      gainNode.gain.setValueAtTime(0.08, audioContext.currentTime);
+      
+      oscillator.start();
+      backgroundMusic = { oscillator, gainNode };
+    }
+    
+    // Play sound effect
+    function playSound(frequency, duration = 0.1, volume = 0.3) {
+      if (!audioContext) return;
+      
+      const oscillator = audioContext.createOscillator();
+      const gainNode = audioContext.createGain();
+      
+      oscillator.connect(gainNode);
+      gainNode.connect(audioContext.destination);
+      
+      oscillator.frequency.setValueAtTime(frequency, audioContext.currentTime);
+      gainNode.gain.setValueAtTime(volume, audioContext.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + duration);
+      
+      oscillator.start();
+      oscillator.stop(audioContext.currentTime + duration);
+    }
+    
+    // Join Daily.js volleyball room
+    async function joinDailyRoom() {
+      try {
+        const dailyContainer = document.getElementById('daily-container');
+        const dailyIframe = document.getElementById('daily-iframe');
+        
+        dailyContainer.style.display = 'block';
+        
+        // Set the iframe source to the volleyball room with muted mics
+        dailyIframe.src = 'https://vcroom.daily.co/volleyball?layout=grid&showParticipantNames=true&showLeaveButton=true&startAudioOff=true';
+        
+        updateStatus('daily-status', 'Daily: Video Connected ✅', 'good');
+        console.log('✅ Joined Daily.js volleyball room for video');
+        
+        initializeWebSocket();
+        
+      } catch (error) {
+        console.error('Error joining Daily room:', error);
+        updateStatus('daily-status', 'Daily: Failed ❌', 'error');
+      }
+    }
+    
+    // Initialize WebSocket for gesture sharing
+    function initializeWebSocket() {
+      try {
+        ws = new WebSocket('ws://localhost:8082');
+        
+        ws.onopen = function() {
+          wsConnected = true;
+          updateStatus('game-status-detail', `WebSocket: Connected as Player ${myPlayerId + 1} ✅`, 'good');
+          console.log('✅ WebSocket connected for volleyball gesture sharing');
+          
+          ws.send(JSON.stringify({
+            type: 'playerJoin',
+            playerId: myPlayerId,
+            timestamp: Date.now()
+          }));
+          
+          updatePlayerCount();
+        };
+        
+        ws.onmessage = function(event) {
+          try {
+            const data = JSON.parse(event.data);
+            handleWebSocketMessage(data);
+          } catch (error) {
+            console.error('Error parsing WebSocket message:', error);
+          }
+        };
+        
+        ws.onclose = function() {
+          wsConnected = false;
+          updateStatus('game-status-detail', 'WebSocket: Disconnected ⚠️', 'warn');
+          console.log('WebSocket disconnected, falling back to local mode');
+          initializeLocalStorage();
+        };
+        
+        ws.onerror = function(error) {
+          console.error('WebSocket error:', error);
+          updateStatus('game-status-detail', 'WebSocket: Error, using local mode ⚠️', 'warn');
+          initializeLocalStorage();
+        };
+        
+      } catch (error) {
+        console.error('WebSocket initialization failed:', error);
+        initializeLocalStorage();
+      }
+    }
+    
+    // Fallback to localStorage for local testing
+    function initializeLocalStorage() {
+      updateStatus('game-status-detail', `Local Mode: Player ${myPlayerId + 1} ✅`, 'good');
+      console.log('Using localStorage for volleyball gesture sharing (local testing mode)');
+      
+      window.addEventListener('storage', function(e) {
+        if (e.key === 'volleyballGestures') {
+          try {
+            const data = JSON.parse(e.newValue);
+            if (data.playerId !== myPlayerId) {
+              handleGestureMessage(data);
+            }
+          } catch (error) {
+            console.error('Error parsing localStorage gesture data:', error);
+          }
+        }
+      });
+      
+      updatePlayerCount();
+    }
+    
+    // Handle WebSocket messages
+    function handleWebSocketMessage(data) {
+      if (data.playerId === myPlayerId) return;
+      
+      switch (data.type) {
+        case 'playerJoin':
+          connectedPlayers[data.playerId] = { joinTime: data.timestamp };
+          updatePlayerCount();
+          break;
+        case 'playerLeave':
+          delete connectedPlayers[data.playerId];
+          updatePlayerCount();
+          break;
+        case 'pose':
+          handleGestureMessage(data);
+          break;
+        case 'ballSpike':
+          // Sync ball state from other players
+          gameState.ballVelocity = data.ballVelocity;
+          volleyball.position.set(data.ballPosition.x, data.ballPosition.y, data.ballPosition.z);
+          gameState.ballSide = data.ballSide;
+          playSound(380, 0.2, 0.5); // Volleyball spike sound
+          console.log(`🏐 Received ball spike from Player ${data.playerId + 1}`);
+          break;
+        case 'ballUpdate':
+          // Continuous ball position sync
+          if (Math.abs(data.timestamp - Date.now()) < 500) { // Only sync recent updates
+            volleyball.position.set(data.ballPosition.x, data.ballPosition.y, data.ballPosition.z);
+            gameState.ballVelocity = data.ballVelocity;
+          }
+          break;
+      }
+    }
+    
+    // Handle gesture messages - apply remote poses to correct players
+    function handleGestureMessage(data) {
+      if (data.type === 'pose' && data.playerId !== myPlayerId) {
+        // Apply received pose to the specific remote player only
+        if (data.playerId >= 0 && data.playerId < players.length && players[data.playerId]) {
+          applyRemotePoseToPlayer(data.pose, players[data.playerId]);
+        }
+      }
+    }
+    
+    // Apply remote player poses (without triggering ball spikes)
+    function applyRemotePoseToPlayer(pose, player) {
+      if (!pose || !player) return;
+      
+      const wrist = pose[16];
+      const elbow = pose[14];
+      const shoulder = pose[12];
+      const leftWrist = pose[15];
+      const leftShoulder = pose[11];
+      
+      if (!wrist || !elbow || !shoulder) return;
+      
+      const bones = player.userData.bones;
+      if (!bones) return;
+      
+      // Apply arm rotation (visual only, no ball interaction)
+      if (bones.rightArm) {
+        const armAngleX = (wrist.y - shoulder.y) * 3;
+        const armAngleZ = -(wrist.x - shoulder.x) * 3;
+        
+        bones.rightArm.rotation.x = armAngleX;
+        bones.rightArm.rotation.z = armAngleZ;
+      }
+      
+      if (bones.leftArm && leftWrist) {
+        const leftArmAngleX = (leftWrist.y - leftShoulder.y) * 3;
+        const leftArmAngleZ = -(leftWrist.x - leftShoulder.x) * 3;
+        
+        bones.leftArm.rotation.x = leftArmAngleX;
+        bones.leftArm.rotation.z = leftArmAngleZ;
+      }
+      
+      // Note: No ball interaction for remote players - only visual arm movement
+    }
+    
+    // Send pose data via WebSocket or localStorage
+    function broadcastPoseData(pose) {
+      const poseMessage = {
+        type: 'pose',
+        pose: pose,
+        playerId: myPlayerId,
+        timestamp: Date.now()
+      };
+      
+      if (wsConnected && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify(poseMessage));
+      } else {
+        localStorage.setItem('volleyballGestures', JSON.stringify(poseMessage));
+      }
+    }
+    
+    // Send ball spike data with complete state
+    function broadcastBallSpike() {
+      const ballMessage = {
+        type: 'ballSpike',
+        ballVelocity: gameState.ballVelocity,
+        ballPosition: {
+          x: volleyball.position.x,
+          y: volleyball.position.y,
+          z: volleyball.position.z
+        },
+        ballSide: gameState.ballSide,
+        playerId: myPlayerId,
+        timestamp: Date.now()
+      };
+      
+      if (wsConnected && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify(ballMessage));
+      } else {
+        localStorage.setItem('volleyballGestures', JSON.stringify(ballMessage));
+      }
+    }
+    
+    // Continuously sync ball position for all players
+    function broadcastBallUpdate() {
+      if (!wsConnected || ws.readyState !== WebSocket.OPEN) return;
+      
+      const ballUpdate = {
+        type: 'ballUpdate',
+        ballPosition: {
+          x: volleyball.position.x,
+          y: volleyball.position.y,
+          z: volleyball.position.z
+        },
+        ballVelocity: gameState.ballVelocity,
+        timestamp: Date.now()
+      };
+      
+      ws.send(JSON.stringify(ballUpdate));
+    }
+    
+    // Update player count display
+    function updatePlayerCount() {
+      const connectedCount = Object.keys(connectedPlayers).length + 1;
+      document.getElementById('player-count').textContent = connectedCount;
+      
+      const indicators = document.querySelectorAll('.player-indicator');
+      indicators.forEach((indicator, index) => {
+        if (index < 10) {
+          indicator.style.opacity = index === myPlayerId ? '1' : '0.7';
+          if (index === myPlayerId) {
+            indicator.classList.add('active');
+          } else {
+            indicator.classList.remove('active');
+          }
+        }
+      });
+    }
+    
+    // Initialize the volleyball scene
+    async function init() {
+      console.log('Initializing Volleyball MediaPipe scene...');
+      
+      scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x87CEEB);
+      
+      // Create camera - volleyball court view
+      camera = new THREE.PerspectiveCamera(37.5, window.innerWidth / window.innerHeight, 0.1, 1000);
+      camera.position.set(0, 8, 12);
+      camera.lookAt(0, 2, 0);
+      
+      renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.shadowMap.enabled = true;
+      renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+      document.body.appendChild(renderer.domElement);
+      
+      // Add lighting
+      const ambientLight = new THREE.AmbientLight(0x606060, 0.6);
+      scene.add(ambientLight);
+      
+      const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+      directionalLight.position.set(10, 15, 5);
+      directionalLight.castShadow = true;
+      directionalLight.shadow.mapSize.width = 2048;
+      directionalLight.shadow.mapSize.height = 2048;
+      scene.add(directionalLight);
+      
+      // Load 360 background
+      await load360Background();
+      
+      // Create volleyball court
+      createVolleyballCourt();
+      
+      // Create volleyball
+      createVolleyball();
+      
+      // Create players
+      createVolleyballPlayers();
+      
+      // Calculate target positions for trajectories
+      calculateVolleyballTrajectories();
+      
+      animate();
+      
+      console.log('✅ Volleyball MediaPipe scene initialized');
+    }
+    
+    // Create volleyball court
+    function createVolleyballCourt() {
+      // Court base (volleyball court is 18m x 9m)
+      const courtGeometry = new THREE.PlaneGeometry(18, 9);
+      const courtMaterial = new THREE.MeshLambertMaterial({ 
+        color: 0xD2691E, // Sandy brown for volleyball court
+        transparent: true,
+        opacity: 0.8
+      });
+      volleyballCourt = new THREE.Mesh(courtGeometry, courtMaterial);
+      volleyballCourt.rotation.x = -Math.PI / 2;
+      volleyballCourt.receiveShadow = true;
+      scene.add(volleyballCourt);
+      
+      // Volleyball net (higher than tennis)
+      const netGeometry = new THREE.BoxGeometry(9.5, 2.43, 0.1); // 2.43m high volleyball net
+      const netMaterial = new THREE.MeshLambertMaterial({ color: 0xFFFFFF });
+      const net = new THREE.Mesh(netGeometry, netMaterial);
+      net.position.set(0, 1.2, 0); // Higher net position
+      net.castShadow = true;
+      scene.add(net);
+      
+      console.log('Volleyball court created with high net');
+    }
+    
+    // Load 360 background photosphere
+    async function load360Background() {
+      try {
+        console.log('Loading 360 background...');
+        const loader = new THREE.GLTFLoader();
+        
+        const gltf = await new Promise((resolve, reject) => {
+          loader.load('assets/pyrenees 360 photosphere.glb', resolve, undefined, reject);
+        });
+        
+        const photosphere = gltf.scene;
+        photosphere.scale.set(50, 50, 50);
+        scene.add(photosphere);
+        
+        console.log('✅ 360 background loaded');
+      } catch (error) {
+        console.warn('360 background failed to load, using sky color:', error);
+      }
+    }
+    
+    // Create volleyball - larger and white
+    function createVolleyball() {
+      const ballGeometry = new THREE.SphereGeometry(0.3); // Volleyball size
+      const ballMaterial = new THREE.MeshLambertMaterial({ color: 0xFFFFFF }); // White volleyball
+      volleyball = new THREE.Mesh(ballGeometry, ballMaterial);
+      
+      volleyball.position.set(0, 2, 0); // Center court, elevated
+      volleyball.castShadow = true;
+      scene.add(volleyball);
+      
+      console.log('Volleyball created in center');
+    }
+    
+    // Create 10 volleyball players (5 per side)
+    function createVolleyballPlayers() {
+      const playerPositions = [
+        // Team 1 (front side) - 5 players
+        { x: -3, z: 3 }, { x: -1.5, z: 3 }, { x: 0, z: 3 }, { x: 1.5, z: 3 }, { x: 3, z: 3 },
+        // Team 2 (back side) - 5 players  
+        { x: -3, z: -3 }, { x: -1.5, z: -3 }, { x: 0, z: -3 }, { x: 1.5, z: -3 }, { x: 3, z: -3 }
+      ];
+      
+      playerPositions.forEach((pos, index) => {
+        const player = createVolleyballPlayer(index);
+        player.position.set(pos.x, 0, pos.z);
+        scene.add(player);
+        players.push(player);
+      });
+      
+      console.log('10 volleyball players created (5 per side)');
+    }
+    
+    // Create individual volleyball player with unique appearance
+    function createVolleyballPlayer(playerId) {
+      const characterGroup = new THREE.Group();
+      
+      // 10 unique player styles
+      const playerStyles = [
+        { body: 0x4CAF50, head: 0xFFE0BD }, { body: 0xFF5722, head: 0xFFDBB0 }, 
+        { body: 0x2196F3, head: 0xFFE4C4 }, { body: 0xFF9800, head: 0xFFE0BD },
+        { body: 0x9C27B0, head: 0xFFE0BD }, { body: 0x00BCD4, head: 0xFFDBB0 },
+        { body: 0x8BC34A, head: 0xFFE4C4 }, { body: 0xFF4081, head: 0xFFE0BD },
+        { body: 0x607D8B, head: 0xFFDBB0 }, { body: 0xFFC107, head: 0xFFE0BD }
+      ];
+      
+      const style = playerStyles[playerId] || playerStyles[0];
+      
+      // Volleyball player body
+      const bodyGeometry = new THREE.CylinderGeometry(0.25, 0.25, 1.8); // Taller for volleyball
+      const bodyMaterial = new THREE.MeshLambertMaterial({ color: style.body });
+      const body = new THREE.Mesh(bodyGeometry, bodyMaterial);
+      body.position.y = 0.9;
+      body.castShadow = true;
+      characterGroup.add(body);
+      
+      // Head
+      const headGeometry = new THREE.SphereGeometry(0.2);
+      const headMaterial = new THREE.MeshLambertMaterial({ color: style.head });
+      const head = new THREE.Mesh(headGeometry, headMaterial);
+      head.position.y = 2;
+      head.castShadow = true;
+      characterGroup.add(head);
+      
+      // Arms for volleyball spiking
+      const rightShoulder = new THREE.Object3D();
+      rightShoulder.position.set(0.3, 1.6, 0);
+      rightShoulder.name = 'RightShoulder';
+      characterGroup.add(rightShoulder);
+      
+      const rightUpperArm = new THREE.Object3D();
+      rightUpperArm.position.set(0, -0.3, 0);
+      rightUpperArm.name = 'RightUpperArm';
+      rightShoulder.add(rightUpperArm);
+      
+      const armGeometry = new THREE.CylinderGeometry(0.06, 0.06, 0.5);
+      const armMaterial = new THREE.MeshLambertMaterial({ color: style.body });
+      const rightArmMesh = new THREE.Mesh(armGeometry, armMaterial);
+      rightArmMesh.position.y = -0.25;
+      rightArmMesh.castShadow = true;
+      rightUpperArm.add(rightArmMesh);
+      
+      // Left arm
+      const leftShoulder = new THREE.Object3D();
+      leftShoulder.position.set(-0.3, 1.6, 0);
+      leftShoulder.name = 'LeftShoulder';
+      characterGroup.add(leftShoulder);
+      
+      const leftUpperArm = new THREE.Object3D();
+      leftUpperArm.position.set(0, -0.3, 0);
+      leftUpperArm.name = 'LeftUpperArm';
+      leftShoulder.add(leftUpperArm);
+      
+      const leftArmMesh = new THREE.Mesh(armGeometry.clone(), armMaterial.clone());
+      leftArmMesh.position.y = -0.25;
+      leftArmMesh.castShadow = true;
+      leftUpperArm.add(leftArmMesh);
+      
+      // Store bone references
+      const bones = {
+        'RightShoulder': rightShoulder,
+        'RightUpperArm': rightUpperArm,
+        'LeftShoulder': leftShoulder, 
+        'LeftUpperArm': leftUpperArm,
+        'rightArm': rightUpperArm,
+        'leftArm': leftUpperArm
+      };
+      
+      characterGroup.userData = {
+        bones: bones,
+        playerId: playerId,
+        lastSpikeTime: 0,
+        team: playerId < 5 ? 1 : 2 // First 5 players = team 1, next 5 = team 2
+      };
+      
+      // Add player number label
+      const canvas = document.createElement('canvas');
+      canvas.width = 128;
+      canvas.height = 32;
+      const context = canvas.getContext('2d');
+      context.fillStyle = `#${style.body.toString(16).padStart(6, '0')}`;
+      context.fillRect(0, 0, 128, 32);
+      context.fillStyle = 'white';
+      context.font = 'bold 16px Arial';
+      context.textAlign = 'center';
+      context.fillText(`P${playerId + 1}`, 64, 22);
+      
+      const texture = new THREE.CanvasTexture(canvas);
+      const labelMaterial = new THREE.MeshBasicMaterial({ map: texture, transparent: true });
+      const labelGeometry = new THREE.PlaneGeometry(0.8, 0.2);
+      const label = new THREE.Mesh(labelGeometry, labelMaterial);
+      label.position.y = 2.5;
+      characterGroup.add(label);
+      
+      return characterGroup;
+    }
+    
+    // Calculate 5 volleyball trajectories per side
+    function calculateVolleyballTrajectories() {
+      gameState.targetPositions = [
+        // Team 1 to Team 2 trajectories
+        { x: -3, z: -3 }, { x: -1.5, z: -3 }, { x: 0, z: -3 }, { x: 1.5, z: -3 }, { x: 3, z: -3 },
+        // Team 2 to Team 1 trajectories
+        { x: -3, z: 3 }, { x: -1.5, z: 3 }, { x: 0, z: 3 }, { x: 1.5, z: 3 }, { x: 3, z: 3 }
+      ];
+    }
+    
+    // Set up MediaPipe pose tracking
+    async function setupMediaPipe() {
+      try {
+        if (!window.TasksVision) {
+          throw new Error('TasksVision not available');
+        }
+        
+        const { FilesetResolver, PoseLandmarker } = window.TasksVision;
+        
+        const vision = await FilesetResolver.forVisionTasks(
+          "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/wasm"
+        );
+        
+        poseLandmarker = await PoseLandmarker.createFromOptions(vision, {
+          baseOptions: {
+            modelAssetPath: "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task",
+            delegate: "GPU"
+          },
+          runningMode: "VIDEO",
+          numPoses: 1
+        });
+        
+        updateStatus('mediapipe-status', 'MediaPipe: Ready ✅', 'good');
+        console.log('✅ MediaPipe pose landmarker ready');
+        
+      } catch (error) {
+        console.error('Error setting up MediaPipe:', error);
+        updateStatus('mediapipe-status', 'MediaPipe: Error ❌', 'error');
+      }
+    }
+    
+    // Start camera
+    async function startCamera() {
+      try {
+        await initializeAudio();
+        
+        const video = document.getElementById('webcam');
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { width: 320, height: 240 }
+        });
+        
+        video.srcObject = stream;
+        video.onloadedmetadata = () => {
+          webcamRunning = true;
+          updateStatus('camera-status', 'Camera: Running ✅', 'good');
+          console.log('✅ Camera started');
+          
+          if (!poseTrackingActive) {
+            togglePoseTracking();
+          }
+          
+          updateStatus('daily-status', 'Daily: Click "Join Multiplayer" ▶️', 'warn');
+        };
+        
+      } catch (error) {
+        console.error('Error starting camera:', error);
+        updateStatus('camera-status', 'Camera: Error ❌', 'error');
+      }
+    }
+    
+    // Toggle pose tracking
+    function togglePoseTracking() {
+      poseTrackingActive = !poseTrackingActive;
+      
+      if (poseTrackingActive && webcamRunning && poseLandmarker) {
+        startPoseDetection();
+        updateStatus('game-status-detail', 'Pose: Tracking ✅', 'good');
+      } else {
+        updateStatus('game-status-detail', 'Pose: Stopped ⏸️', 'warn');
+      }
+      
+      console.log('Volleyball pose tracking:', poseTrackingActive);
+    }
+    
+    // Start pose detection loop
+    function startPoseDetection() {
+      const video = document.getElementById('webcam');
+      
+      const detectPose = async () => {
+        if (!poseTrackingActive || !webcamRunning || !poseLandmarker) return;
+        
+        try {
+          if (video.readyState >= 2) {
+            const result = await poseLandmarker.detectForVideo(video, performance.now());
+            
+            if (result.landmarks && result.landmarks.length > 0) {
+              currentPose = result.landmarks[0];
+              
+              // Apply pose ONLY to my own player character
+              if (players[myPlayerId]) {
+                applyPoseToPlayer(currentPose, players[myPlayerId]);
+              }
+              
+              applyHeadTrackingToCamera(currentPose);
+              broadcastPoseData(currentPose);
+              updatePoseDisplay(currentPose);
+            }
+          }
+        } catch (error) {
+          console.error('Error detecting pose:', error);
+        }
+        
+        if (poseTrackingActive) {
+          requestAnimationFrame(detectPose);
+        }
+      };
+      
+      detectPose();
+    }
+    
+    // Apply MediaPipe pose to volleyball player
+    function applyPoseToPlayer(pose, player) {
+      if (!pose || !player) return;
+      
+      const wrist = pose[16]; // Right wrist
+      const elbow = pose[14]; // Right elbow
+      const shoulder = pose[12]; // Right shoulder
+      const leftWrist = pose[15]; // Left wrist
+      const leftShoulder = pose[11]; // Left shoulder
+      
+      if (!wrist || !elbow || !shoulder) return;
+      
+      const bones = player.userData.bones;
+      if (!bones) return;
+      
+      // Calculate spike motion
+      const spikeVelocity = Math.sqrt(
+        Math.pow(wrist.x - shoulder.x, 2) +
+        Math.pow(wrist.y - shoulder.y, 2)
+      );
+      
+      // Apply arm rotation (fixed direction)
+      if (bones.rightArm) {
+        const armAngleX = (wrist.y - shoulder.y) * 3;
+        const armAngleZ = -(wrist.x - shoulder.x) * 3;
+        
+        bones.rightArm.rotation.x = armAngleX;
+        bones.rightArm.rotation.z = armAngleZ;
+      }
+      
+      if (bones.leftArm && leftWrist) {
+        const leftArmAngleX = (leftWrist.y - leftShoulder.y) * 3;
+        const leftArmAngleZ = -(leftWrist.x - leftShoulder.x) * 3;
+        
+        bones.leftArm.rotation.x = leftArmAngleX;
+        bones.leftArm.rotation.z = leftArmAngleZ;
+      }
+      
+      // Detect volleyball spike
+      if (player.userData.playerId === myPlayerId && spikeVelocity > 0.3 && Date.now() - player.userData.lastSpikeTime > 800) {
+        console.log(`🏐 Player ${player.userData.playerId + 1} spike detected!`, { velocity: spikeVelocity });
+        player.userData.lastSpikeTime = Date.now();
+        
+        playSound(250, 0.1, 0.3); // Volleyball spike sound
+        spikeVolleyball(player, spikeVelocity);
+      }
+    }
+    
+    // Volleyball spike with predefined trajectories
+    function spikeVolleyball(player, spikePower) {
+      const playerId = player.userData.playerId;
+      const playerTeam = player.userData.team;
+      
+      // Get target position based on player position and team
+      let targetIndex;
+      if (playerTeam === 1) {
+        // Team 1 to Team 2: use positions 5-9
+        targetIndex = 5 + (playerId % 5); // Maps player 0-4 to targets 5-9
+      } else {
+        // Team 2 to Team 1: use positions 0-4  
+        targetIndex = (playerId - 5) % 5; // Maps player 5-9 to targets 0-4
+      }
+      
+      const targetPos = gameState.targetPositions[targetIndex];
+      const currentPos = volleyball.position;
+      
+      // Calculate volleyball arc trajectory
+      const distance = Math.sqrt(
+        Math.pow(targetPos.x - currentPos.x, 2) + 
+        Math.pow(targetPos.z - currentPos.z, 2)
+      );
+      
+      // Volleyball trajectory with high arc
+      gameState.ballVelocity.x = (targetPos.x - currentPos.x) * 1.5;
+      gameState.ballVelocity.y = 5 + (distance * 0.3); // High volleyball arc
+      gameState.ballVelocity.z = (targetPos.z - currentPos.z) * 1.5;
+      
+      // Switch ball side
+      gameState.ballSide = gameState.ballSide === 1 ? -1 : 1;
+      
+      console.log(`🏐 Player ${playerId + 1} (Team ${playerTeam}) spikes to position ${targetIndex + 1}!`);
+      
+      playSound(380, 0.2, 0.5); // Volleyball hit sound
+      
+      // Broadcast the spike to other players immediately
+      broadcastBallSpike();
+    }
+    
+    // Apply head tracking for immersive camera movement
+    function applyHeadTrackingToCamera(pose) {
+      if (!pose) return;
+      
+      const nose = pose[0];
+      const leftEye = pose[2];
+      const rightEye = pose[5];
+      
+      if (!nose || !leftEye || !rightEye) return;
+      
+      const headCenterX = (leftEye.x + rightEye.x) / 2;
+      const headCenterY = (leftEye.y + rightEye.y) / 2;
+      
+      const headOffsetX = (headCenterX - 0.5) * 2;
+      const headOffsetY = (headCenterY - 0.5) * 2;
+      
+      // Apply head tracking to camera base position
+      baseCameraPosition.x = headOffsetX * 2;
+      baseCameraPosition.y = 8 - (headOffsetY * 1.5);
+      
+      // Limit camera movement range
+      baseCameraPosition.x = Math.max(-4, Math.min(4, baseCameraPosition.x));
+      baseCameraPosition.y = Math.max(5, Math.min(11, baseCameraPosition.y));
+    }
+    
+    // Update pose display
+    function updatePoseDisplay(pose) {
+      const wrist = pose[16];
+      const velocity = wrist ? Math.sqrt(wrist.x * wrist.x + wrist.y * wrist.y) : 0;
+      
+      document.getElementById('swing-velocity').textContent = velocity.toFixed(3);
+      document.getElementById('ball-position').textContent = 
+        `${volleyball.position.x.toFixed(1)}, ${volleyball.position.y.toFixed(1)}, ${volleyball.position.z.toFixed(1)}`;
+    }
+    
+    // Update volleyball physics
+    function updateVolleyballPhysics() {
+      const dt = 0.016; // 60fps
+      
+      // Apply gravity
+      gameState.ballVelocity.y -= 9.8 * dt;
+      
+      // Update position
+      volleyball.position.x += gameState.ballVelocity.x * dt;
+      volleyball.position.y += gameState.ballVelocity.y * dt;
+      volleyball.position.z += gameState.ballVelocity.z * dt;
+      
+      // Ground bounce
+      if (volleyball.position.y <= 0.3) {
+        volleyball.position.y = 0.3;
+        gameState.ballVelocity.y = Math.abs(gameState.ballVelocity.y) * 0.5; // Less bouncy
+        gameState.ballVelocity.x *= 0.9;
+        gameState.ballVelocity.z *= 0.9;
+        
+        playSound(280, 0.1, 0.2); // Volleyball bounce
+        
+        // Check if ball missed
+        if (Math.abs(volleyball.position.z) > 4) {
+          handleVolleyballMiss();
+        }
+      }
+      
+      // Court bounds
+      if (Math.abs(volleyball.position.x) > 9) {
+        handleVolleyballMiss();
+      }
+      
+      if (Math.abs(volleyball.position.z) > 4.5) {
+        handleVolleyballMiss();
+      }
+      
+      // Reset if too high
+      if (volleyball.position.y > 25) {
+        resetVolleyballToCenter();
+      }
+    }
+    
+    // Handle volleyball miss and scoring
+    function handleVolleyballMiss() {
+      console.log('🏐 Volleyball out! Scoring point...');
+      
+      let scoringTeam;
+      if (volleyball.position.z > 0) {
+        // Ball on team 1 side, team 2 scores
+        scoringTeam = 2;
+        gameState.team2Score++;
+      } else {
+        // Ball on team 2 side, team 1 scores
+        scoringTeam = 1;
+        gameState.team1Score++;
+      }
+      
+      console.log(`🏆 Team ${scoringTeam} scores! New score: ${gameState.team1Score}-${gameState.team2Score}`);
+      updateVolleyballScore();
+      
+      setTimeout(() => {
+        resetVolleyballToCenter();
+      }, 1500);
+    }
+    
+    // Update volleyball scoring (first to 21 points)
+    function updateVolleyballScore() {
+      document.getElementById('team1-score').textContent = gameState.team1Score;
+      document.getElementById('team2-score').textContent = gameState.team2Score;
+      
+      // Volleyball scoring: first to 21 points, must win by 2
+      if (gameState.team1Score >= 21 && gameState.team1Score - gameState.team2Score >= 2) {
+        gameWon(1);
+      } else if (gameState.team2Score >= 21 && gameState.team2Score - gameState.team1Score >= 2) {
+        gameWon(2);
+      }
+      
+      // Update game status
+      if (gameState.team1Sets >= 2) {
+        document.getElementById('game-status').textContent = 'Team 1 Wins Match!';
+      } else if (gameState.team2Sets >= 2) {
+        document.getElementById('game-status').textContent = 'Team 2 Wins Match!';
+      } else {
+        document.getElementById('game-status').textContent = 
+          `Set ${gameState.team1Sets + gameState.team2Sets + 1} - Score: ${gameState.team1Score}-${gameState.team2Score}`;
+      }
+    }
+    
+    // Handle game win
+    function gameWon(team) {
+      console.log(`🏆 Team ${team} wins the set!`);
+      
+      if (team === 1) {
+        gameState.team1Sets++;
+      } else {
+        gameState.team2Sets++;
+      }
+      
+      gameState.team1Score = 0;
+      gameState.team2Score = 0;
+      
+      // Check for match win (best of 3 sets)
+      if (gameState.team1Sets >= 2 || gameState.team2Sets >= 2) {
+        console.log(`🏆 Match complete! Team ${team} wins!`);
+        gameState.isPlaying = false;
+      }
+    }
+    
+    // Reset volleyball to center
+    function resetVolleyballToCenter() {
+      volleyball.position.set(0, 2, 0);
+      gameState.ballVelocity = { x: 0, y: 0, z: 0 };
+      gameState.ballSide = Math.random() > 0.5 ? 1 : -1;
+    }
+    
+    // Reset game
+    function resetGame() {
+      resetVolleyballToCenter();
+      gameState.team1Score = 0;
+      gameState.team2Score = 0;
+      gameState.team1Sets = 0;
+      gameState.team2Sets = 0;
+      gameState.isPlaying = true;
+      
+      document.getElementById('team1-score').textContent = '0';
+      document.getElementById('team2-score').textContent = '0';
+      document.getElementById('game-status').textContent = 'New Volleyball Match Started';
+    }
+    
+    // Toggle fullscreen
+    function toggleFullscreen() {
+      if (!document.fullscreenElement) {
+        document.documentElement.requestFullscreen();
+      } else {
+        document.exitFullscreen();
+      }
+    }
+    
+    // Animation loop
+    function animate() {
+      requestAnimationFrame(animate);
+      
+      updateVolleyballPhysics();
+      
+      // Broadcast ball position every few frames for sync
+      if (Math.floor(cameraTime * 60) % 5 === 0) { // Every 5 frames at 60fps
+        broadcastBallUpdate();
+      }
+      
+      // Cinematic camera movement
+      cameraTime += 0.01;
+      
+      const cameraOffset = {
+        x: Math.sin(cameraTime * 0.3) * 0.3,
+        y: Math.sin(cameraTime * 0.2) * 0.15,
+        z: Math.cos(cameraTime * 0.1) * 0.2
+      };
+      
+      camera.position.set(
+        baseCameraPosition.x + cameraOffset.x,
+        baseCameraPosition.y + cameraOffset.y,
+        baseCameraPosition.z + cameraOffset.z
+      );
+      
+      const lookAtOffset = {
+        x: Math.sin(cameraTime * 0.4) * 0.1,
+        y: 2,
+        z: Math.cos(cameraTime * 0.3) * 0.05
+      };
+      
+      camera.lookAt(lookAtOffset.x, lookAtOffset.y, lookAtOffset.z);
+      
+      renderer.render(scene, camera);
+    }
+    
+    // Handle window resize
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+    
+    // Initialize everything
+    init();
+    
+    // Auto-setup everything when script loads
+    setTimeout(async () => {
+      console.log('🚀 Auto-starting volleyball experience...');
+      
+      await setupMediaPipe();
+      
+      setTimeout(() => {
+        console.log('🚀 Auto-joining volleyball multiplayer...');
+        joinDailyRoom();
+      }, 2000);
+      
+      setTimeout(() => {
+        console.log('🚀 Auto-starting camera and pose tracking...');
+        startCamera();
+      }, 3000);
+      
+    }, 1000);
+    
+    // Clean up on page unload
+    window.addEventListener('beforeunload', () => {
+      if (ws && wsConnected) {
+        ws.send(JSON.stringify({
+          type: 'playerLeave',
+          playerId: myPlayerId,
+          timestamp: Date.now()
+        }));
+        ws.close();
+      }
+      if (callObject) {
+        callObject.leave();
+        callObject.destroy();
+      }
+      if (backgroundMusic && backgroundMusic.oscillator) {
+        backgroundMusic.oscillator.stop();
+      }
+    });
+  </script>
+</body>
+</html>
